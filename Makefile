@@ -15,6 +15,7 @@ run:
 clean:
 	@rm -Rf .venv
 	@rm -Rf __pycache__
+	@rm -Rf src/__pycache__
 	@rm -Rf .mypy_cache
 	@rm -Rf uv.lock
 	@echo "All code clean"
