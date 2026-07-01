@@ -7,7 +7,16 @@ requires-python = ">=3.12"
 dependencies = [
     "flake8>=7.3.0",
     "mypy>=2.1.0",
+    "numpy>=2.5.0",
     "pydantic>=2.13.4",
-    "torch>=2.12.1",
-    "transformers>=5.12.1",
+    "llm-sdk",
+    "accelerate>=1.14.0",
 ]
+
+[tool.uv.workspace]
+members = [
+    "llm_sdk",
+]
+
+[tool.uv.sources]
+llm-sdk = { workspace = true, editable = true }
