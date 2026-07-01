@@ -4,7 +4,7 @@ MYPY_STRICT = --strict
 FLAKE_STRICT = --max-complexity=5
 MAIN = src/main.py
 
-.PHONY: install run debug clean lint lint-strict
+.PHONY: install run debug clean lint lint-strict test
 
 install:
 	@uv sync
@@ -18,6 +18,7 @@ clean:
 	@rm -Rf src/__pycache__
 	@rm -Rf .mypy_cache
 	@rm -Rf uv.lock
+	@rm -Rf llm_sdk/.venv
 	@echo "All code clean"
 
 lint:
@@ -30,3 +31,6 @@ lint-strict:
 
 debug:
 	@uv run python3 -m pdb $(MAIN)
+
+test:
+	@uv run python -m src.test
