@@ -44,8 +44,8 @@ class ParsngFunctions(BaseModel):
 
     @classmethod
     def parse_functions(cls, data: list[dict[str, Any]]) -> list[
-     'ParsingPompt']:
-        valid_data: list['ParsingPompt'] = []
+            'ParsngFunctions']:
+        valid_data: list['ParsngFunctions'] = []
 
         for item in data:
             try:
