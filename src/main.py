@@ -18,8 +18,10 @@ def check_argument() -> tuple[Any, Any, Any]:
 def main(input: str, output: str, functions_definition: str) -> None:
     data_prompt: list[dict[str, Any]] = json_to_data(input)
     data_function: list[dict[str, Any]] = json_to_data(functions_definition)
-    ParsingPompt.parse_prompts(data_prompt)
-    ParsngFunctions.parse_functions(data_function)
+
+    parse_prompt: list[ParsingPompt] = ParsingPompt.parse_prompts(data_prompt)
+    parse_function: list[
+        ParsngFunctions] = ParsngFunctions.parse_functions(data_function)
 
 
 if __name__ == "__main__":
