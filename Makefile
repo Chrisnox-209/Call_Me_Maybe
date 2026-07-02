@@ -4,7 +4,7 @@ MYPY_STRICT = --strict
 FLAKE_STRICT = --max-complexity=5
 MAIN = src/main.py
 
-.PHONY: install run debug clean lint lint-strict test
+.PHONY: install run debug clean lint lint-strict test voca
 
 install:
 	@uv sync
@@ -34,3 +34,6 @@ debug:
 
 test:
 	@uv run python -m src.test
+
+vocab:
+	@uv run python -m src.vocab $(ARGS)
