@@ -1,6 +1,8 @@
-from parse import json_to_data, ParsingPompt, ParsngFunctions
+from parse import json_to_data, ParsingPompt, ParsngFunctions, check_output
 import argparse
 from typing import Any
+from inference import run_inference
+import sys
 
 
 def check_argument() -> tuple[Any, Any, Any]:
@@ -16,12 +18,17 @@ def check_argument() -> tuple[Any, Any, Any]:
 
 
 def main(input: str, output: str, functions_definition: str) -> None:
+    if not check_output(output):
+        sys.exit(1)
+
     data_prompt: list[dict[str, Any]] = json_to_data(input)
     data_function: list[dict[str, Any]] = json_to_data(functions_definition)
 
     parse_prompt: list[ParsingPompt] = ParsingPompt.parse_prompts(data_prompt)
     parse_function: list[
         ParsngFunctions] = ParsngFunctions.parse_functions(data_function)
+
+    run_inference(parse_prompt, parse_function, output)
 
 
 if __name__ == "__main__":

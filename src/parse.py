@@ -1,6 +1,18 @@
 from pydantic import BaseModel, Field, ValidationError
 import json
 from typing import Any
+from pathlib import Path
+
+
+def check_output(output: str) -> bool:
+    path = Path(output)
+    if not path.parent.exists():
+        print(f"[ERROR]: The folder '{path.parent}' does not exist.")
+        return False
+    if not path.parent.is_dir():
+        print(f"[ERROR]: '{path.parent}' is not a folder.")
+        return False
+    return True
 
 
 def json_to_data(file: str) -> Any:
