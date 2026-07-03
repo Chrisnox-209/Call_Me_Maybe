@@ -19,6 +19,7 @@ clean:
 	@rm -Rf .mypy_cache
 	@rm -Rf uv.lock
 	@rm -Rf llm_sdk/.venv
+	@rm -Rf data/output
 	@echo "All code clean"
 
 lint:
@@ -37,3 +38,4 @@ test:
 
 vocab:
 	@uv run python -m src.vocab $(ARGS)
+	
