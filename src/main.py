@@ -1,33 +1,38 @@
-from parse import json_to_data, ParsingPompt, ParsngFunctions, check_output
-import argparse
+from parse import (json_to_data, ParsingPompt,
+                   ParsngFunctions, check_output,
+                   check_argument, OutputPathError,
+                   Color)
+
 from typing import Any
 from inference import run_inference
 import sys
 
 
-def check_argument() -> tuple[Any, Any, Any]:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--input",
-                        default="data/input/function_calling_tests.json")
-    parser.add_argument("--output",
-                        default="data/output/function_calls.json")
-    parser.add_argument("--functions_definition",
-                        default="data/input/functions_definition.json")
-    args: argparse.Namespace = parser.parse_args()
-    return args.input, args.output, args.functions_definition
-
-
 def main(input: str, output: str, functions_definition: str) -> None:
-    if not check_output(output):
+    try:
+        check_output(output)
+    except OutputPathError as e:
+        print(f"{Color.RED.value}[ERROR]{Color.RST.value} {e}")
         sys.exit(1)
 
-    data_prompt: list[dict[str, Any]] = json_to_data(input)
-    data_function: list[dict[str, Any]] = json_to_data(functions_definition)
+    try:
+        data_prompt: list[dict[str, Any]] = (
+            json_to_data(input))
+        data_function: list[dict[str, Any]] = (
+            json_to_data(functions_definition))
+    except ValueError as e:
+        print(f"{Color.RED.value}[ERROR]{Color.RST.value} {e}")
+        sys.exit(1)
 
-    parse_prompt: list[ParsingPompt] = ParsingPompt.parse_prompts(data_prompt)
-    parse_function: list[
-        ParsngFunctions] = ParsngFunctions.parse_functions(data_function)
+    try:
+        parse_prompt: list[ParsingPompt] = (
+            ParsingPompt.parse_prompts(data_prompt))
+        parse_function: list[ParsngFunctions] = (
+            ParsngFunctions.parse_functions(data_function))
 
+    except ValueError as e:
+        print(f"{Color.RED.value}[ERROR]{Color.RST.value} {e}")
+        sys.exit(1)
     run_inference(parse_prompt, parse_function, output)
 
 
@@ -35,5 +40,6 @@ if __name__ == "__main__":
     input: str
     output: str
     functions_definition: str
+
     input, output, functions_definition = check_argument()
     main(input, output, functions_definition)
