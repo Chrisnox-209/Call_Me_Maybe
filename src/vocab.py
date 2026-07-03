@@ -1,6 +1,6 @@
+from llm_sdk import Small_LLM_Model  # type: ignore
 import json
 import sys
-from llm_sdk.llm_sdk import Small_LLM_Model
 from typing import Any
 
 

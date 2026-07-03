@@ -1,7 +1,6 @@
 from pydantic import BaseModel, Field, ValidationError
 from enum import Enum
 import json
-import sys
 from typing import Any, Literal
 from pathlib import Path
 import argparse
