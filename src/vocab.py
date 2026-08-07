@@ -1,7 +1,7 @@
 from llm_sdk import Small_LLM_Model  # type: ignore
-import json
 import sys
-from typing import Any
+
+from torch import Tensor
 
 
 def arguments() -> list[str]:
@@ -15,19 +15,21 @@ def arguments() -> list[str]:
 
 def main(arguments: list[str]) -> None:
     llm = Small_LLM_Model()
-    path: str = llm.get_path_to_vocab_file()
 
-    with open(path, 'r', encoding="utf8") as file:
-        vocabulaire: Any = json.load(file)
+    for word in arguments:
+        try:
+            tokens: Tensor = llm.encode(word)
+            subword: list[str] = [llm.decode([tok]) for tok
+                                  in tokens[0].tolist()]
 
-    for char in arguments:
-        if char not in vocabulaire:
-            print(f"\033[1m\033[31m[ERROR]:\033[0m \033[1m{char} "
-                  f"\033[0m\033[90m is not in vocab.json\033[0m")
-        else:
-            token: int = vocabulaire[char]
-            print(f"\033[1m\033[32m[TOKEN]:\033[0m \033[36m{char} "
-                  f"\033[0m\033[1m--> \033[0m\033[36m{token}\033[0m")
+            print(f"\033[1m\033[32m[{word}]: \n"
+                  f"\033[1m\033[35mTOKEN(S) \033[34m--> "
+                  f"\033[0m\033[36m{tokens[0].tolist()}\n"
+                  f"\033[1m\033[35mSUBWORD\033[34m--> "
+                  f"\033[0m\033[36m{subword}\n\n")
+        except Exception as error:
+            print(f"\033[1m\033[31m[ERROR]:\033[0m Could not tokenize "
+                  f"\033[1m{word}\033[0m ({error})")
 
 
 if __name__ == "__main__":
