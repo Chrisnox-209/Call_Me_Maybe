@@ -1,10 +1,11 @@
 from llm_sdk import Small_LLM_Model  # type: ignore
-from parse import ParsingPompt, ParsngFunctions
+from parse import ParsingPompt, ParsngFunctions, Color
 from typing import Any, Iterator, Literal
-# import string
-# import json
+import numpy as np
+from numpy.typing import NDArray
+import json
 
-
+   
 def build_prompt_func(data_function: list[ParsngFunctions]) -> str:
     prompt_func: str = ''
     for func in data_function:
@@ -18,58 +19,68 @@ def build_prompt_func(data_function: list[ParsngFunctions]) -> str:
 
 
 def build_struct() -> str:
-    return 'result = [{"prompt": ...,"name": ...,"parameters": {...}}, ...'
+    return """exemple:
+    [
+        {
+            "prompt": "What is the sum of 2 and 3?",
+            "name": "fn_add_numbers",
+            "parameters": {
+                "a": 2.0,
+                "b": 3.0
+            }
+        },
+        {
+            "prompt": "Reverse the string 'hello'",
+            "name": "fn_reverse_string",
+            "parameters": {
+                "s": "hello"
+            }
+        }
+    ]"""
 
 
-def run_inference(data_prompt: list[ParsingPompt],
-                  data_function: list[ParsngFunctions],
-                  output: str) -> None:
+def charge_vocab(llm) -> Any:
+    file_vocab: str = llm.get_path_to_vocab_file()
+
+    try:
+        with open(file_vocab, "r", encoding="utf-8") as content:
+            return json.load(content)
+    except FileNotFoundError:
+        raise ValueError(f'The file "{Color.YELLOW.value}{file_vocab}'
+                         f'{Color.RST.value}" could not be found.')
+    except json.JSONDecodeError:
+        raise ValueError(f'The file "{Color.YELLOW.value}{file_vocab}'
+                         f'"{Color.RST.value}" is not valid JSON.')
+
+
+def run_inference(data_prompt: list, data_function: list, output: str) -> None:
+
     llm: Any = Small_LLM_Model()
+    vocab: Any = charge_vocab(llm)
 
-    # prompts: Iterator[ParsingPompt] = iter(data_prompt)
-    prompt_func: str = build_prompt_func(data_function)
+    print(data_prompt[0].prompt)
 
-#    for i in range(10):
-#    while True:
+    function: list[int] = llm.encode(build_prompt_func(
+        data_function))[0].tolist()
 
-#        if j != 0:
-    # Decode
+    exemple: list[int] = llm.encode(build_struct())[0].tolist()
 
-    # text: ParsingPompt = next(prompts)
-    # prompt: str = text.prompt
-    pre_prompt = ('You are an assistant. Here is a question. Here are the '
-                  'functions. Complete the rest with the correct information '
-                  'to generate a JSON format.\n\n[{"prompt":')
+    for line in data_prompt:
+        prompt: str = llm.encode(line.prompt)[0].tolist()
+        send_prompt: list[int] = function + prompt + exemple
 
-    # struct: str = build_struct()
-    llm_prompt: str = (
-        "What is the sum of 2 and 3?\n\n" + prompt_func + pre_prompt)
-    exit_llm: list[int] = []
+        while True:
+            logits: NDArray[Any] = np.array(llm.get_logits_from_input_ids(
+                send_prompt))
+            logits_origin = logits
+            logits[:] = -float("inf")
+            logits[58] = logits_origin[58]
+            next_token = int(np.argmax(logits))
+            send_prompt.append(next_token)
 
-    # ENCODAGE
-    input_ids: Any = llm.encode(llm_prompt)[0].tolist()
-
-    for etape in range(20):
-
-        # A. On demande les probabilités pour le prochain numéro
-        logits: list[float] = llm.get_logits_from_input_ids(input_ids)
-
-        # B. On choisit la probabilité la plus haute (le meilleur token)
-        meilleure_proba: float = max(logits)
-        prochain_token_id: int = logits.index(meilleure_proba)
-        if prochain_token_id == 151643:
-            print("Signal de fin")
-            break
-
-        # C. On ajoute ce nouveau numéro à notre liste pour le tour suivant
-        exit_llm.append(prochain_token_id)
-        input_ids.append(prochain_token_id)
-
-        # D. On décode juste ce token pour l'afficher à l'écran
-        mot: Any = llm.decode([prochain_token_id])
-        # print(f"Meilleur proba: {meilleure_proba}")
-        # print(f"   ↳ Token {prochain_token_id} -> '{mot}'")
-    # 3. DÉCODAGE FINAL : On retransforme tous les numéros en texte lisible
-
-    reponse_complete: Any = llm.decode(exit_llm)
-    print(f"\n✅ Résultat final : {reponse_complete}")
+            result: str = llm.decode([next_token])
+            print(result, end="", flush=True)
+            
+            if send_prompt[-1] == 60:
+                break
+            
