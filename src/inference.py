@@ -53,34 +53,80 @@ def charge_vocab(llm) -> Any:
                          f'"{Color.RST.value}" is not valid JSON.')
 
 
-def run_inference(data_prompt: list, data_function: list, output: str) -> None:
+# def run_inference(data_prompt: list, data_function: list, output: str) -> None:
 
+#     llm: Any = Small_LLM_Model()
+#     vocab: Any = charge_vocab(llm)
+
+#     print(data_prompt[0].prompt)
+
+#     function: list[int] = llm.encode(build_prompt_func(
+#         data_function))[0].tolist()
+
+#     exemple: list[int] = llm.encode(build_struct())[0].tolist()
+
+#     for line in data_prompt:
+#         prompt: str = llm.encode(line.prompt)[0].tolist()
+#         send_prompt: list[int] = function + prompt + llm.encode('[\n{\n  "prompt": "')[0].tolist()
+
+#         while True:
+#             logits: NDArray[Any] = np.array(llm.get_logits_from_input_ids(
+#                 send_prompt))
+#             logits_origin = logits
+#             # logits[:] = -float("inf")
+#             logits[:] = logits_origin
+#             next_token = int(np.argmax(logits))
+#             send_prompt.append(next_token)
+
+#             result: str = llm.decode([next_token])
+#             print(result, end="", flush=True)
+
+#             if send_prompt[-1] == 60:
+#                 break
+
+def run_inference(data_prompt: list, data_function: list, output: str) -> None:
     llm: Any = Small_LLM_Model()
     vocab: Any = charge_vocab(llm)
 
-    print(data_prompt[0].prompt)
-
-    function: list[int] = llm.encode(build_prompt_func(
-        data_function))[0].tolist()
-
-    exemple: list[int] = llm.encode(build_struct())[0].tolist()
+    function: list[int] = llm.encode(build_prompt_func(data_function))[0].tolist()
 
     for line in data_prompt:
-        prompt: str = llm.encode(line.prompt)[0].tolist()
-        send_prompt: list[int] = function + prompt + exemple
+        prompt: list[int] = llm.encode(line.prompt)[0].tolist()
+        
+        # Ton amorce de départ
+        send_prompt: list[int] = function + prompt + llm.encode('[\n{\n  "prompt": "')[0].tolist()
+
+        # 1. Tu initialises ton état de départ ici
+        state = "WRITING_PROMPT"
 
         while True:
-            logits: NDArray[Any] = np.array(llm.get_logits_from_input_ids(
-                send_prompt))
-            logits_origin = logits
-            logits[:] = -float("inf")
-            logits[58] = logits_origin[58]
+            logits: NDArray[Any] = np.array(llm.get_logits_from_input_ids(send_prompt))
+            logits_origin = logits.copy()
+
+            # 2. Le masquage s'adapte selon l'état actuel
+            if state == "WRITING_PROMPT":
+                # Exemple : Tu laisses tout ouvert, ou tu filtres si besoin
+                pass
+            elif state == "WAITING_FOR_FUNCTION_NAME":
+                # Ici, tu mets tout à -inf, et tu ré-ouvres uniquement 
+                # les tokens qui composent le nom de tes fonctions valides (`data_function`)
+                logits[:] = -float("inf")
+                # ... ta logique pour démasquer les lettres des fonctions ...
+
+            # Choix du token
             next_token = int(np.argmax(logits))
             send_prompt.append(next_token)
 
+            # Affichage en direct
             result: str = llm.decode([next_token])
             print(result, end="", flush=True)
-            
-            if send_prompt[-1] == 60:
+
+            # 3. La transition d'état : est-ce qu'on doit changer d'étape ?
+            if state == "WRITING_PROMPT":
+                # Si le modèle vient d'écrire le guillemet fermant '"'
+                if result == '"':
+                    state = "WAITING_FOR_FUNCTION_NAME" # On passe à l'étape suivante !
+
+            # Condition de fin globale (par exemple si on atteint une accolade fermante finale)
+            if send_prompt[-1] == 60: # (mets ton ID de fin ici)
                 break
-            
