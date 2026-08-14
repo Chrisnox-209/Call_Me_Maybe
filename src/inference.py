@@ -1,11 +1,11 @@
 from llm_sdk import Small_LLM_Model  # type: ignore
-from parse import ParsingPompt, ParsngFunctions, Color
+from parse import ParsingPompt, ParsngFunctions
 from typing import Any, Iterator, Literal
 import numpy as np
 from numpy.typing import NDArray
-import json
+from utils import charge_vocab, reverse_vocab, lst_name_fonction
 
-   
+
 def build_prompt_func(data_function: list[ParsngFunctions]) -> str:
     prompt_func: str = ''
     for func in data_function:
@@ -18,101 +18,56 @@ def build_prompt_func(data_function: list[ParsngFunctions]) -> str:
     return prompt_func
 
 
-def build_struct() -> str:
-    return """exemple:
-    [
-        {
-            "prompt": "What is the sum of 2 and 3?",
-            "name": "fn_add_numbers",
-            "parameters": {
-                "a": 2.0,
-                "b": 3.0
-            }
-        },
-        {
-            "prompt": "Reverse the string 'hello'",
-            "name": "fn_reverse_string",
-            "parameters": {
-                "s": "hello"
-            }
-        }
-    ]"""
+def step_name(logits: NDArray[Any], logits_origin: NDArray[Any], vocab: dict,
+              name_fonc: list[str], llm: Any, send_prompt: list[int]) -> None:
+    logits[:] = -float("inf")
+    characters_authorized: str = ("abcdefghijklmnopqrstuvwxyz"
+                             "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
+    ids_authorized: list[int] = []
 
+    current_text = llm.decode(send_prompt)
+    current_name = current_text.split('"name": "')[-1]
+    for token_id, token_text in vocab.items():
+        if token_text not in characters_authorized and token_text != '"':
+            continue
+        candidat = current_name + token_text
+        valide = False
 
-def charge_vocab(llm) -> Any:
-    file_vocab: str = llm.get_path_to_vocab_file()
+        for name in name_fonc:
+            if name.startswith(candidat):
+                valide = True
+                break
+            if name == current_name and token_text == '"':
+                valide = True
+                break
 
-    try:
-        with open(file_vocab, "r", encoding="utf-8") as content:
-            return json.load(content)
-    except FileNotFoundError:
-        raise ValueError(f'The file "{Color.YELLOW.value}{file_vocab}'
-                         f'{Color.RST.value}" could not be found.')
-    except json.JSONDecodeError:
-        raise ValueError(f'The file "{Color.YELLOW.value}{file_vocab}'
-                         f'"{Color.RST.value}" is not valid JSON.')
-
-
-# def run_inference(data_prompt: list, data_function: list, output: str) -> None:
-
-#     llm: Any = Small_LLM_Model()
-#     vocab: Any = charge_vocab(llm)
-
-#     print(data_prompt[0].prompt)
-
-#     function: list[int] = llm.encode(build_prompt_func(
-#         data_function))[0].tolist()
-
-#     exemple: list[int] = llm.encode(build_struct())[0].tolist()
-
-#     for line in data_prompt:
-#         prompt: str = llm.encode(line.prompt)[0].tolist()
-#         send_prompt: list[int] = function + prompt + llm.encode('[\n{\n  "prompt": "')[0].tolist()
-
-#         while True:
-#             logits: NDArray[Any] = np.array(llm.get_logits_from_input_ids(
-#                 send_prompt))
-#             logits_origin = logits
-#             # logits[:] = -float("inf")
-#             logits[:] = logits_origin
-#             next_token = int(np.argmax(logits))
-#             send_prompt.append(next_token)
-
-#             result: str = llm.decode([next_token])
-#             print(result, end="", flush=True)
-
-#             if send_prompt[-1] == 60:
-#                 break
-# def state_machine(logits, state) -> None:
-
-
-
-
+        if valide:
+            token_id_int = int(token_id)
+            ids_authorized.append(token_id_int)
+            logits[token_id_int] = logits_origin[token_id_int]
+                
 
 def run_inference(data_prompt: list, data_function: list, output: str) -> None:
     llm: Any = Small_LLM_Model()
-    vocab: Any = charge_vocab(llm)
+    vocab: dict = reverse_vocab(charge_vocab(llm))
 
-    function: list[int] = llm.encode(build_prompt_func(data_function))[0].tolist()
+    function: list[int] = llm.encode(build_prompt_func(
+        data_function))[0].tolist()
 
     for line in data_prompt:
-        starter = f'[\n{{\n  "prompt": "{line.prompt}",\n  "name": "'
-        send_prompt = function + llm.encode(starter)[0].tolist()
-
+        starter: str = f'[\n{{\n  "prompt": "{line.prompt}",\n  "name": "'
+        send_prompt: Any = function + llm.encode(starter)[0].tolist()
         state = 1
 
         while True:
             logits: NDArray[Any] = np.array(
                 llm.get_logits_from_input_ids(send_prompt))
-            
-            logits_origin = logits.copy()
+            logits_origin: NDArray[Any] = logits.copy()
 
-            # state_machine(logits, state)
             if state == 1:
-                logits[:] = -float("inf")
-                ids_autorises = [62, 822]
-                for token_id in ids_autorises:
-                    logits[token_id] = logits_origin[token_id]
+                name_fonc: list[str] = lst_name_fonction(data_function)
+                step_name(logits, logits_origin, vocab,
+                          name_fonc, llm, send_prompt)
 
             elif state == 2:
                 logits[:] = -float("inf")
@@ -137,6 +92,6 @@ def run_inference(data_prompt: list, data_function: list, output: str) -> None:
             #         state = 2 # On passe à l'étape suivante !
 
             # Condition de fin globale (par exemple si on atteint une accolade fermante finale)
-            if send_prompt[-1] == 60: # (mets ton ID de fin ici)
+            if send_prompt[-1] == 60:
                 break
     
