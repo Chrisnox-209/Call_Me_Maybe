@@ -22,21 +22,24 @@ def step_name(logits: NDArray[Any], logits_origin: NDArray[Any], vocab: dict,
               name_fonc: list[str], llm: Any, send_prompt: list[int]) -> None:
     logits[:] = -float("inf")
     characters_authorized: str = ("abcdefghijklmnopqrstuvwxyz"
-                             "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
+                                  "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
     ids_authorized: list[int] = []
 
-    current_text = llm.decode(send_prompt)
-    current_name = current_text.split('"name": "')[-1]
+    current_text: str = llm.decode(send_prompt)
+    current_name: str = current_text.split('"name": "')[-1]
+
     for token_id, token_text in vocab.items():
         if token_text not in characters_authorized and token_text != '"':
             continue
-        candidat = current_name + token_text
+
+        candidat: str = current_name + token_text
         valide = False
 
         for name in name_fonc:
             if name.startswith(candidat):
                 valide = True
                 break
+
             if name == current_name and token_text == '"':
                 valide = True
                 break
@@ -45,7 +48,25 @@ def step_name(logits: NDArray[Any], logits_origin: NDArray[Any], vocab: dict,
             token_id_int = int(token_id)
             ids_authorized.append(token_id_int)
             logits[token_id_int] = logits_origin[token_id_int]
-                
+
+
+def step_parameters(logits: NDArray[Any], logits_origin: NDArray[Any],
+                    vocab: dict) -> None:
+    logits[:] = -float("inf")
+    caracteres_autorises = ('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO'
+                            'PQRSTUVWXYZ0123456789_"{},. :[]\n\t-')
+
+    for token_id, token_text in vocab.items():
+        valide = True
+        for char in token_text:
+            if char not in caracteres_autorises:
+                valide = False
+                break
+
+        if valide:
+            token_id_int = int(token_id)
+            logits[token_id_int] = logits_origin[token_id_int]
+
 
 def run_inference(data_prompt: list, data_function: list, output: str) -> None:
     llm: Any = Small_LLM_Model()
@@ -66,32 +87,23 @@ def run_inference(data_prompt: list, data_function: list, output: str) -> None:
 
             if state == 1:
                 name_fonc: list[str] = lst_name_fonction(data_function)
-                step_name(logits, logits_origin, vocab,
-                          name_fonc, llm, send_prompt)
+                step_name(logits, logits_origin, vocab, name_fonc, llm, send_prompt)
 
             elif state == 2:
-                logits[:] = -float("inf")
+                step_parameters(logits, logits_origin, vocab)
 
             next_token = int(np.argmax(logits))
-            
-            # 1. On l'ajoute d'abord à l'historique
             send_prompt.append(next_token)
 
-            # Affichage en direct
             result: str = llm.decode([next_token])
             print(result, end="", flush=True)
 
-            # if next_token == llm.encode('"')[0][-1]:
-            #     print("\n") # Petit saut de ligne propre
-            #     break
+            if state == 1 and result == '"':
+                state = 2
+            if state == 1 and result == '}':
+                state = 3
 
-            # # 3. La transition d'état : est-ce qu'on doit changer d'étape ?
-            # if state == 1:
-            #     # Si le modèle vient d'écrire le guillemet fermant '"'
-            #     if result == '"':
-            #         state = 2 # On passe à l'étape suivante !
 
-            # Condition de fin globale (par exemple si on atteint une accolade fermante finale)
             if send_prompt[-1] == 60:
                 break
     
