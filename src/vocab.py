@@ -1,36 +1,62 @@
 from llm_sdk import Small_LLM_Model  # type: ignore
-import sys
-
+import os
+import json
+from typing import Any
 from torch import Tensor
 
 
-def arguments() -> list[str]:
-    search: list[str] = []
-    if len(sys.argv) > 1:
-        for i in range(len(sys.argv)):
-            if i != 0:
-                search.append(sys.argv[i])
-    return search
+def charge_vocab(llm: Any) -> Any:
+    file_vocab: str = llm.get_path_to_vocab_file()
+
+    try:
+        with open(file_vocab, "r", encoding="utf-8") as content:
+            return json.load(content)
+    except FileNotFoundError:
+        raise ValueError(
+            f'The file "{file_vocab}" could not be found.'
+        )
+    except json.JSONDecodeError:
+        raise ValueError(
+            f"The file {file_vocab} is not valid JSON."
+        )
 
 
-def main(arguments: list[str]) -> None:
-    llm = Small_LLM_Model()
+def main() -> None:
+    llm: Any = Small_LLM_Model()
+    vocab: Any = charge_vocab(llm)
 
-    for word in arguments:
-        try:
-            tokens: Tensor = llm.encode(word)
-            subword: list[str] = [llm.decode([tok]) for tok
-                                  in tokens[0].tolist()]
+    word: str = os.environ["ARGS"]
 
-            print(f"\033[1m\033[32m[{word}]: \n"
-                  f"\033[1m\033[35mTOKEN(S) \033[34m--> "
-                  f"\033[0m\033[36m{tokens[0].tolist()}\n"
-                  f"\033[1m\033[35mSUBWORD\033[34m--> "
-                  f"\033[0m\033[36m{subword}\n\n")
-        except Exception as error:
-            print(f"\033[1m\033[31m[ERROR]:\033[0m Could not tokenize "
-                  f"\033[1m{word}\033[0m ({error})")
+    try:
+        tokens: Tensor = llm.encode(word)
+        subword: list[str] = [
+            llm.decode([tok])
+            for tok in tokens[0].tolist()
+        ]
+
+        id_lst: list[int] = []
+
+        for text in vocab.keys():
+            for w in subword:
+                if w == text:
+                    id_lst.append(vocab[text])
+
+        print(
+            f"\033[1m\033[32m[{word}]: \n"
+            f"\033[1m\033[35mTOKEN(S) \033[34m--> "
+            f"\033[0m\033[36m{tokens[0].tolist()}\n"
+            f"\033[1m\033[35mSUBWORD\033[34m--> "
+            f"\033[0m\033[36m{subword}\n"
+            f"\033[1m\033[35mID_VOCAB\033[34m--> "
+            f"\033[0m\033[36m{id_lst}\n\n"
+        )
+
+    except Exception as error:
+        print(
+            f"\033[1m\033[31m[ERROR]:\033[0m Could not tokenize "
+            f"\033[1m{word}\033[0m ({error})"
+        )
 
 
 if __name__ == "__main__":
-    main(arguments())
+    main()
