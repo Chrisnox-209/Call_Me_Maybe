@@ -38,7 +38,8 @@ def add_none(data_function: str) -> None:
     new_function: dict[str, Any] = {
         "name": "fn_none",
         "description": (
-            "Fallback function. Use this function for all other possibilities "
+            "Fallback function. USE THIS FUNCTION if the user prompt is completely "
+            "unrelated, impossible, about colors, or does not fit any other function."
         ),
         "parameters": {},
         "returns": {
