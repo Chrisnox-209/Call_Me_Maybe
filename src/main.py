@@ -5,6 +5,7 @@ from parse import (json_to_data, ParsingPompt,
 
 from typing import Any
 from inference import run_inference
+from utils import add_none
 import sys
 
 
@@ -12,6 +13,12 @@ def main(input: str, output: str, functions_definition: str) -> None:
     try:
         check_output(output)
     except OutputPathError as e:
+        print(f"{Color.RED.value}[ERROR]{Color.RST.value} {e}")
+        sys.exit(1)
+
+    try:
+        add_none(functions_definition)
+    except ValueError as e:
         print(f"{Color.RED.value}[ERROR]{Color.RST.value} {e}")
         sys.exit(1)
 

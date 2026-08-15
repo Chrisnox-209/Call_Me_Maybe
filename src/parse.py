@@ -85,7 +85,7 @@ def json_to_data(file: str) -> Any:
 
 
 class TypeDef(BaseModel):
-    type: Literal["number", "string", "boolean", "object"]
+    type: Literal["number", "string", "boolean", "object", "none"]
 
 
 class ParsingPompt(BaseModel):
