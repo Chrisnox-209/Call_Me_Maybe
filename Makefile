@@ -4,7 +4,7 @@ MYPY_STRICT = --strict
 FLAKE_STRICT = --max-complexity=5
 MAIN = src/main.py
 
-.PHONY: all install run clean lint lint-strict debug test vocab
+.PHONY: all install run clean lint lint-strict debug vocab
 
 all: run
 
@@ -34,9 +34,6 @@ lint-strict:
 
 debug:
 	@uv run python3 -m pdb $(MAIN)
-
-test:
-	@uv run python -m src.color
 
 vocab:
 	@uv run python -m src.vocab
