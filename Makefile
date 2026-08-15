@@ -1,10 +1,12 @@
 MYPY_FLAGS = --warn-return-any --warn-unused-ignores --ignore-missing-imports \
---disallow-untyped-defs --check-untyped-defs
+	--disallow-untyped-defs --check-untyped-defs
 MYPY_STRICT = --strict
 FLAKE_STRICT = --max-complexity=5
 MAIN = src/main.py
 
-.PHONY: install run debug clean lint lint-strict test voca
+.PHONY: all install run clean lint lint-strict debug test vocab
+
+all: run
 
 install:
 	@uv sync
@@ -34,8 +36,7 @@ debug:
 	@uv run python3 -m pdb $(MAIN)
 
 test:
-	@uv run python -m src.test
+	@uv run python -m src.color
 
 vocab:
-	@uv run python -m src.vocab $(ARGS)
-	
+	@uv run python -m src.vocab
