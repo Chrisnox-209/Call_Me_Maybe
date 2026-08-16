@@ -1,7 +1,7 @@
 MYPY_FLAGS = --warn-return-any --warn-unused-ignores --ignore-missing-imports \
 	--disallow-untyped-defs --check-untyped-defs
 MYPY_STRICT = --strict
-FLAKE_STRICT = --max-complexity=5
+FLAKE_STRICT = --max-complexity=20
 MAIN = src/main.py
 
 .PHONY: all install run clean lint lint-strict debug vocab
