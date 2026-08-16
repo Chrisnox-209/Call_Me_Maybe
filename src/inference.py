@@ -51,7 +51,7 @@ def step_name(logits: NDArray[Any], logits_origin: NDArray[Any],
               vocab: dict[int, str], name_fonc: list[str], llm: Any,
               send_prompt: list[int]) -> None:
     logits[:] = -float("inf")
-    # On ajoute le guillemet directement dans les caractères autorisés
+
     characters_authorized: str = ("abcdefghijklmnopqrstuvwxyz"
                                   "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_\"")
 
@@ -180,7 +180,7 @@ def run_inference(
     function: list[int] = llm.encode(build_prompt_func(
         data_function))[0].tolist()
 
-    resultats_finaux = []
+    resultats_finaux: list[dict[str, str]] = []
 
     for line in data_prompt:
         starter: str = f'Task: {line.prompt}\nJSON:\n{{\n  "name": "'
@@ -206,7 +206,6 @@ def run_inference(
                 send_prompt))
             logits_origin: NDArray[Any] = logits.copy()
 
-            # --- 1. APPLICATION DES MASQUES ---
             if state == 1:
                 name_fonc: list[str] = lst_name_fonction(data_function)
                 step_name(logits, logits_origin, vocab,
@@ -215,14 +214,12 @@ def run_inference(
                 step_parameters(logits, logits_origin, vocab,
                                 llm, send_prompt, chosen_func_obj)
 
-            # --- 2. GÉNÉRATION DU NOUVEAU TOKEN ---
             next_token = int(np.argmax(logits))
             send_prompt.append(next_token)
 
             result: str = llm.decode([next_token])
             print(result, end="", flush=True)
 
-            # --- 3. TRANSITION ÉTAT 1 -> ÉTAT 2 ---
             if state == 1:
                 texte_complet: Any = llm.decode(send_prompt)
                 nom_en_cours: str = texte_complet.split('"name": "')[-1]
@@ -232,7 +229,8 @@ def run_inference(
 
                     if nom_genere == "fn_none":
                         print(
-                            "\n[INFO] Le modèle a déterminé qu'aucune fonction ne correspond.")
+                            "\n[INFO] Le modèle a déterminé qu'aucune "
+                            "fonction ne correspond.")
                         aide_json = '\n}'
                         aide_tokens: Any = llm.encode(aide_json)[0].tolist()
                         send_prompt.extend(aide_tokens)
@@ -252,19 +250,19 @@ def run_inference(
 
                     if chosen_func_obj is None:
                         print(
-                            f"\n\n[ERREUR] La fonction '{nom_genere}' n'a pas été trouvée !")
+                            f"\n\n[ERREUR] La fonction '{nom_genere}' n'a "
+                            "pas été trouvée !")
                         break
 
                     print(
-                        f"\n[INFO] Fonction détectée : {chosen_func_obj.name}.")
+                        f"\n[INFO] Fonction détectée : {
+                            chosen_func_obj.name}.")
 
-                    # --- INJECTION MANUELLE DE LA STRUCTURE PARAMETERS ---
                     aide_json = ',\n  "parameters": {\n    '
                     aide_tokens = llm.encode(aide_json)[0].tolist()
                     send_prompt.extend(aide_tokens)
                     print(aide_json, end="", flush=True)
 
-                    # Si la fonction a des paramètres, on injecte aussi manuellement la première clé
                     if chosen_func_obj.parameters:
                         premiere_cle = list(
                             chosen_func_obj.parameters.keys())[0]
@@ -273,7 +271,6 @@ def run_inference(
                         send_prompt.extend(aide_cle_tokens)
                         print(aide_cle, end="", flush=True)
 
-# --- 4. CONDITION D'ARRÊT FINAL (ÉTAT 2) ---
             elif state == 2:
                 texte_actuel: Any = llm.decode(send_prompt)
                 nb_ouvertes: Any = texte_actuel.count('{')
@@ -281,8 +278,7 @@ def run_inference(
 
                 if nb_ouvertes > 0 and nb_ouvertes == nb_fermees:
                     json_str = "{\n" + texte_actuel.split("JSON:\n{")[-1]
-                    
-                    # --- CORRECTION : Nettoyage du préfixe 'r' parasite (ex: r"..." -> "...") ---
+
                     import re
                     json_str = re.sub(r':\s*r"', ': "', json_str)
 
@@ -290,7 +286,8 @@ def run_inference(
                         objet_json = json.loads(json_str)
                         resultats_finaux.append(objet_json)
                     except json.JSONDecodeError as e:
-                        print(f"\n[ERREUR] Impossible de parser le JSON généré : {e}")
+                        print("\n[ERREUR] Impossible de parser le "
+                              f"JSON généré : {e}")
                         print(f"JSON fautif :\n{json_str}")
 
                     print("\n\n-----------------\n\n")
