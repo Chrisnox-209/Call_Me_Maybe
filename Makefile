@@ -36,4 +36,4 @@ debug:
 	@uv run python3 -m pdb $(MAIN)
 
 vocab:
-	@uv run python -m src.vocab
+	@uv run python -m src.vocab $(ARGS)
