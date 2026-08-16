@@ -38,8 +38,10 @@ def add_none(data_function: str) -> None:
     new_function: dict[str, Any] = {
         "name": "fn_none",
         "description": (
-            "Fallback function. USE THIS FUNCTION if the user prompt is completely "
-            "unrelated, impossible, about colors, or does not fit any other function."
+            "Fallback function. USE THIS FUNCTION if "
+            "the user prompt is completely "
+            "unrelated, impossible, about colors, or does "
+            "not fit any other function."
         ),
         "parameters": {},
         "returns": {
@@ -47,11 +49,31 @@ def add_none(data_function: str) -> None:
         }
     }
 
-    with open(data_function, "r", encoding="utf-8") as f:
-        data: Any = json.load(f)
+    try:
+        with open(data_function, "r", encoding="utf-8") as f:
+            data: Any = json.load(f)
 
-    if not any(function.get("name") == "fn_none" for function in data):
-        data.insert(0, new_function)
+        if not any(function.get("name") == "fn_none" for function in data):
+            data.insert(0, new_function)
 
-    with open(data_function, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
+        with open(data_function, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+
+    except FileNotFoundError:
+        print(f"\n[ERREUR] Le fichier '{data_function}' est introuvable.")
+    except json.JSONDecodeError:
+        print(f"\n[ERREUR] Le fichier '{data_function}' "
+              "contient un JSON invalide.")
+    except Exception as e:
+        print(f"\n[ERREur] Une erreur inattendue est survenue : {e}")
+
+
+def output(file_name: str, resultats_finaux: list[Any]) -> None:
+    try:
+        with open(file_name, "w", encoding="utf-8") as output_file:
+            json.dump(resultats_finaux, output_file, indent=4,
+                      ensure_ascii=False)
+        print("\n[SUCCÈS] Résultats sauvegardés avec succès dans "
+              f"'{file_name}'.")
+    except Exception as e:
+        print(f"\n[ERREUR] Échec de l'écriture du fichier de sortie : {e}")
