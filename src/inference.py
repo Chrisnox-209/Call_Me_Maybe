@@ -1,13 +1,21 @@
+"""Inference engine logic and token constrained generation."""
+
 from typing import Any
 import json
 import numpy as np
 from numpy.typing import NDArray
 from llm_sdk import Small_LLM_Model  # type: ignore
-from parse import ParsngFunctions, ParsingPompt
-from utils import charge_vocab, reverse_vocab, lst_name_fonction, output, Color
+from .parse import ParsngFunctions, ParsingPompt
+from .utils import (
+    charge_vocab, reverse_vocab, lst_name_fonction, output, Color
+)
 
 
 def build_prompt_func(data_function: list[ParsngFunctions]) -> str:
+    """
+    Construct the base prompt string for function calling.
+    This explains to the AI model what functions it can use.
+    """
     prompt_func = (
         "You are an expert AI API router. You must map the user's task "
         "to the correct function.\n\n"
@@ -18,8 +26,8 @@ def build_prompt_func(data_function: list[ParsngFunctions]) -> str:
         prompt_func += f"- name: {func.name}\n"
         prompt_func += f"  description: {func.description}\n"
         prompt_func += "  parameters:\n"
-        for name, param in func.parameters.items():
-            prompt_func += f"    - {name}: {param.type}\n"
+        for param_name, param_obj in func.parameters.items():
+            prompt_func += f"    - {param_name}: {param_obj.type}\n"
         prompt_func += f"  returns: {func.returns.type}\n\n"
 
     prompt_func += (
@@ -32,22 +40,16 @@ def build_prompt_func(data_function: list[ParsngFunctions]) -> str:
         '    "city": "Paris"\n'
         "  }\n"
         "}\n\n"
-        "Task: change blue in white\n"
-        "JSON:\n"
-        "{\n"
-        '  "name": "fn_none"\n'
-        "}\n\n"
-        "Task: Bake me a chocolate cake\n"
-        "JSON:\n"
-        "{\n"
-        '  "name": "fn_none"\n'
-        "}\n\n"
-        "Now process the following task.\n"
     )
     return prompt_func
 
 
-def post_process_types(parsed_data: dict[str, Any], chosen_func_obj: Any) -> dict[str, Any]:
+def post_process_types(
+    parsed_data: dict[str, Any], chosen_func_obj: Any
+) -> dict[str, Any]:
+    """
+    Convert parsed JSON string values into their correct types (like int or float).
+    """
     if not chosen_func_obj or not hasattr(chosen_func_obj, 'parameters'):
         return parsed_data
 
@@ -56,141 +58,170 @@ def post_process_types(parsed_data: dict[str, Any], chosen_func_obj: Any) -> dic
             if param_name in chosen_func_obj.parameters:
                 expected_type = chosen_func_obj.parameters[param_name].type
                 try:
-                    if expected_type in ("number", "float"):
-                        parsed_data["parameters"][param_name] = float(
-                            param_val)
+                    if expected_type == "number" or expected_type == "float":
+                        parsed_data["parameters"][param_name] = float(param_val)
                     elif expected_type == "int":
                         parsed_data["parameters"][param_name] = int(param_val)
                     elif expected_type == "string":
                         parsed_data["parameters"][param_name] = str(param_val)
                 except (ValueError, TypeError):
-                    pass
+                    pass # Ignore errors, just keep the original value
 
     return parsed_data
 
 
 def step_name(logits: NDArray[Any], logits_origin: NDArray[Any],
-              vocab: dict[int, str], name_fonc: list[str], llm: Any,
-              send_prompt: list[int]) -> None:
+              vocab: dict[int, str], allowed_names: list[str], llm: Any,
+              generated_tokens: list[int]) -> None:
+    """
+    Force the AI to only generate a valid function name from our list.
+    """
     logits[:] = -float("inf")
-    characters_authorized: str = ('abcdefghijklmnopqrstuvwxyz'
-                                  'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"')
+    
+    allowed_chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"'
 
-    current_text: str = llm.decode(send_prompt)
-    current_name: str = current_text.split('"name": "')[-1]
+    current_text = llm.decode(generated_tokens)
+    
+    current_name = current_text.split('"name": "')[-1]
 
     for token_id, token_text in vocab.items():
-        clean_text: str = token_text.replace(
-            ' ', '').replace('Ġ', '').replace('Ċ', '').replace('<0x00>', '')
+        clean_text = token_text.replace(' ', '').replace('Ġ', '').replace('Ċ', '').replace('<0x00>', '')
 
-        if not clean_text:
+        if clean_text == "":
             continue
 
-        test_char = True
+        is_valid_char = True
         for char in clean_text:
-            if char not in characters_authorized:
-                test_char = False
+            if char not in allowed_chars:
+                is_valid_char = False
                 break
 
-        if not test_char:
+        if not is_valid_char:
             continue
 
-        string: str = current_name + clean_text
-        valide_string = False
+        future_string = current_name + clean_text
+        is_valid_string = False
 
-        for name in name_fonc:
-            if name.startswith(string):
-                valide_string = True
+        for name in allowed_names:
+            if name.startswith(future_string):
+                is_valid_string = True
                 break
 
             if name == current_name and clean_text == '"':
-                valide_string = True
+                is_valid_string = True
                 break
 
-            if string == name + '"':
-                valide_string = True
+            if future_string == name + '"':
+                is_valid_string = True
                 break
 
-        if valide_string:
+        if is_valid_string:
             logits[int(token_id)] = logits_origin[int(token_id)]
 
 
-def get_authorized_chars_dynamic(type_name: str, write: bool) -> str:
-    if type_name == "key":
+def get_authorized_chars_dynamic(expected_type: str, is_writing_value: bool) -> str:
+    """
+    Return a simple list of characters the AI is allowed to type right now.
+    """
+    if expected_type == "key":
         return 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_" ,:\n\t}'
 
-    if not write or type_name is None:
-        return ('abcdefghijklmnopqrstuvwxyz'
-                'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"{},. :\n\t-')
+    if is_writing_value is False or expected_type is None:
+        return 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"{},. :\n\t-\\'
 
-    if type_name in ("number", "float"):
+    if expected_type == "number" or expected_type == "float":
         return '0123456789.-, \n}'
 
-    elif type_name == "int":
+    if expected_type == "int":
         return '0123456789-, \n}'
 
-    elif type_name == "string":
-        return ('abcdefghijklmnopqrstuvwxyz'
-                'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_ -.,!?\'"\n}')
+    if expected_type == "string":
+        return 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_ -.,!?\'"\n}\\[]+*^$|()'
 
-    return ('abcdefghijklmnopqrstuvwxyz'
-            'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"{},. :\n\t-')
+    return 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"{},. :\n\t-\\'
 
 
-def should_continue_writing(type_name: str, texte_apres_colon: str) -> bool:
-    if type_name in ("number", "float", "int"):
-        if any(char in texte_apres_colon for char in [",", "}"]):
-            return False
+def should_continue_writing(expected_type: str, text_after_colon: str) -> bool:
+    """
+    Check if the AI is still writing the value, or if it is finished.
+    """
+    if expected_type == "number" or expected_type == "float" or expected_type == "int":
+        for char in text_after_colon:
+            if char == "," or char == "}":
+                return False
     else:
-        if texte_apres_colon.count('"') >= 2:
+        quote_count = 0
+        index = 0
+        length = len(text_after_colon)
+        
+        while index < length:
+            char = text_after_colon[index]
+            
+            if char == '\\':
+                index += 2
+                continue
+                
+            if char == '"':
+                quote_count += 1
+                
+            index += 1
+
+        if quote_count >= 2:
             return False
+
     return True
 
 
 def step_parameters(logits: NDArray[Any], logits_origin: NDArray[Any],
-                    vocab: dict[int, str], llm: Any, send_prompt: list[int],
+                    vocab: dict[int, str], llm: Any, generated_tokens: list[int],
                     chosen_function: Any) -> None:
+    """
+    Force the AI to only generate valid parameters for the chosen function.
+    """
     logits[:] = -float("inf")
-    current_text: Any = llm.decode(send_prompt)
+    current_text = llm.decode(generated_tokens)
 
-    last_key_json = None
-    key_position_json: Any = -1
-    type_name: Any = None
-    write: bool = True
+    last_key_found = None
+    key_position = -1
+    expected_type = None
+    is_writing_value = True
 
     if chosen_function and hasattr(chosen_function, 'parameters'):
         for key in chosen_function.parameters.keys():
-            idx: Any = current_text.rfind(f'"{key}"')
-            if idx > key_position_json:
-                key_position_json = idx
-                last_key_json = key
+            idx = current_text.rfind(f'"{key}"')
+            if idx > key_position:
+                key_position = idx
+                last_key_found = key
 
-    if last_key_json is not None:
-        text_from_key: Any = current_text[key_position_json:]
-        idx_colon: Any = text_from_key.find(":")
+    if last_key_found is not None:
+        text_from_key = current_text[key_position:]
+        idx_colon = text_from_key.find(":")
 
         if idx_colon != -1:
-            texte_apres_colon: Any = text_from_key[idx_colon + 1:]
-            type_name = chosen_function.parameters[last_key_json].type
-            write = should_continue_writing(type_name, texte_apres_colon)
+            text_after_colon = text_from_key[idx_colon + 1:]
+            expected_type = chosen_function.parameters[last_key_found].type
+            is_writing_value = should_continue_writing(expected_type, text_after_colon)
         else:
-            type_name = "key"
+            expected_type = "key"
     else:
-        type_name = None
+        expected_type = None
 
-    caracteres_autorises: str = get_authorized_chars_dynamic(type_name, write)
+    allowed_chars = get_authorized_chars_dynamic(expected_type, is_writing_value)
 
     for token_id, token_text in vocab.items():
-        clean_text: Any = token_text.replace(
-            ' ', '').replace('Ġ', '').replace('Ċ', '\n').replace('<0x00>', '')
+        clean_text = token_text.replace(' ', '').replace('Ġ', '').replace('Ċ', '\n').replace('<0x00>', '')
 
-        if not clean_text:
+        if clean_text == "":
             logits[int(token_id)] = logits_origin[int(token_id)]
             continue
 
-        valide = all(char in caracteres_autorises for char in clean_text)
+        is_valid = True
+        for char in clean_text:
+            if char not in allowed_chars:
+                is_valid = False
+                break
 
-        if valide:
+        if is_valid:
             logits[int(token_id)] = logits_origin[int(token_id)]
 
 
@@ -198,129 +229,134 @@ def run_inference(
     data_prompt: list[ParsingPompt],
     data_function: list[ParsngFunctions],
     output_filename: str,
+    model_name: str,
 ) -> None:
-    llm: Any = Small_LLM_Model()
-    vocab: dict[int, str] = reverse_vocab(charge_vocab(llm))
+    """
+    The main loop that runs the AI model token by token for each test.
+    """
+    llm = Small_LLM_Model(model_name=model_name)
+    vocab = reverse_vocab(charge_vocab(llm))
 
-    function: list[int] = llm.encode(build_prompt_func(
-        data_function))[0].tolist()
+    function_prompt = build_prompt_func(data_function)
+    function_tokens = llm.encode(function_prompt)[0].tolist()
 
-    resultats_finaux: list[dict[str, Any]] = []
+    final_results = []
 
-    for line in data_prompt:
-        starter: str = f'Task: {line.prompt}\nJSON:\n{{\n  "name": "'
-        send_prompt: Any = function + llm.encode(starter)[0].tolist()
+    for item in data_prompt:
+        starter = f'Task: {item.prompt}\nJSON:\n{{\n  "name": "'
+        generated_tokens = function_tokens + llm.encode(starter)[0].tolist()
 
         state = 1
-        chosen_func_obj: ParsngFunctions | None = None
+        chosen_function_object = None
 
         token_count = 0
-        max_tokens = 45
+        max_tokens = 150
 
         print(f"\n{Color.GREEN.value}\n\n[PROMPT] "
-              f"{Color.BLUE.value}{line.prompt}"
-              f"{Color.RESET.value}\n")
+              f"{Color.BLUE.value}{item.prompt}"
+              f"{Color.RST.value}\n"
+              f"{Color.WHITE.value}{{\n  \"name\": \"", end="", flush=True)
 
-        size_start_prompt: int = len(send_prompt)
+        size_start_prompt = len(generated_tokens)
 
         while True:
             token_count += 1
             if token_count > max_tokens:
-                print(f"{Color.RED.value}\n\n[ERREUR] "
-                      f"{Color.WHITE.value}Token limit reached !!"
-                      f"{Color.RESET.value}")
-
-                resultats_finaux.append(
-                    {"prompt": line.prompt, "name": "fn_none"})
+                print(f"{Color.RED.value}\n\n[ERROR] Token limit reached !!{Color.RST.value}")
+                final_results.append({"prompt": item.prompt, "name": "fn_none"})
                 print("\n-----------------\n")
                 break
 
-            logits: NDArray[Any] = np.array(llm.get_logits_from_input_ids(
-                send_prompt))
-            logits_origin: NDArray[Any] = logits.copy()
+            logits = np.array(llm.get_logits_from_input_ids(generated_tokens))
+            logits_origin = logits.copy()
 
             if state == 1:
-                name_fonc: list[str] = lst_name_fonction(data_function)
-                step_name(logits, logits_origin, vocab,
-                          name_fonc, llm, send_prompt)
+                allowed_names = lst_name_fonction(data_function)
+                step_name(logits, logits_origin, vocab, allowed_names, llm, generated_tokens)
             elif state == 2:
-                step_parameters(logits, logits_origin, vocab,
-                                llm, send_prompt, chosen_func_obj)
+                step_parameters(logits, logits_origin, vocab, llm, generated_tokens, chosen_function_object)
 
             next_token = int(np.argmax(logits))
-            send_prompt.append(next_token)
+            generated_tokens.append(next_token)
 
-            result: str = llm.decode([next_token])
-            if len(send_prompt) > size_start_prompt:
-                print(f"{Color.WHITE.value}{result}"
-                      f"{Color.RESET.value}", end="", flush=True)
+            result_text = llm.decode([next_token])
+            if len(generated_tokens) > size_start_prompt:
+                print(f"{Color.WHITE.value}{result_text}{Color.RST.value}", end="", flush=True)
 
             if state == 1:
-                full_text: Any = llm.decode(send_prompt)
-                name_func: str = full_text.split('"name": "')[-1]
-                if '"' in name_func:
-                    nom_genere: str = name_func.replace('"', '').strip()
+                full_text = llm.decode(generated_tokens)
+                name_generated = full_text.split('"name": "')[-1]
+                
+                if '"' in name_generated:
+                    clean_name = name_generated.replace('"', '').strip()
 
-                    if nom_genere == "fn_none":
-                        print(
-                            "\n[INFO] Le modèle a déterminé qu'aucune "
-                            "fonction ne correspond.")
-                        aide_json = '\n}'
-                        aide_tokens: Any = llm.encode(aide_json)[0].tolist()
-                        send_prompt.extend(aide_tokens)
-                        print(aide_json, end="", flush=True)
+                    if clean_name == "fn_none":
+                        helper_json = '\n}'
+                        helper_tokens = llm.encode(helper_json)[0].tolist()
+                        generated_tokens.extend(helper_tokens)
+                        print(f"{Color.WHITE.value}{helper_json}{Color.RST.value}", end="", flush=True)
 
-                        resultats_finaux.append(
-                            {"prompt": line.prompt, "name": "fn_none"})
-                        break  # Sort du while pour passer au prompt suivant dans la boucle for
+                        final_results.append({"prompt": item.prompt, "name": "fn_none"})
+                        print("\n-----------------\n")
+                        break
 
                     state = 2
 
                     for func in data_function:
-                        if func.name == nom_genere:
-                            chosen_func_obj = func
+                        if func.name == clean_name:
+                            chosen_function_object = func
                             break
 
-                    if chosen_func_obj is None:
-                        print(f"{Color.RED.value}\n\n[ERREUR] "
-                              f"{Color.WHITE.value}This function "
-                              f"{Color.GREEN.value}'{nom_genere}' "
-                              f"{Color.WHITE.value} was not found. "
-                              f"{Color.RESET.value}")
-                        resultats_finaux.append(
-                            {"prompt": line.prompt, "name": "fn_none"})
+                    if chosen_function_object is None:
+                        print(f"{Color.RED.value}\n\n[ERROR] Function '{clean_name}' not found.{Color.RST.value}")
+                        final_results.append({"prompt": item.prompt, "name": "fn_none"})
+                        print("\n-----------------\n")
                         break
 
-                    aide_json = ',\n  "parameters": {\n    '
-                    aide_tokens = llm.encode(aide_json)[0].tolist()
-                    send_prompt.extend(aide_tokens)
-                    print(aide_json, end="", flush=True)
+                    helper_json = ',\n  "parameters": {\n    '
+                    helper_tokens = llm.encode(helper_json)[0].tolist()
+                    generated_tokens.extend(helper_tokens)
+                    print(f"{Color.WHITE.value}{helper_json}{Color.RST.value}", end="", flush=True)
 
             elif state == 2:
-                texte_actuel: Any = llm.decode(send_prompt)
-                nb_ouvertes: Any = texte_actuel.count('{')
-                nb_fermees: Any = texte_actuel.count('}')
+                current_text = llm.decode(generated_tokens)
+                open_brackets = current_text.count('{')
+                closed_brackets = current_text.count('}')
 
-                if nb_ouvertes > 0 and nb_ouvertes == nb_fermees:
-                    json_str = "{\n" + texte_actuel.split("JSON:\n{")[-1]
+                if open_brackets > 0 and open_brackets == closed_brackets:
+                    json_str = "{\n" + current_text.split("JSON:\n{")[-1]
 
-                    import re
-                    json_str = re.sub(r':\s*r"', ': "', json_str)
+                    json_str = json_str.replace(': r"', ': "')
+                    json_str = json_str.replace(':r"', ':"')
+                    json_str = json_str.replace(':  r"', ': "')
+                    json_str = json_str.replace(": r'", ': "')
+                    json_str = json_str.replace(":r'", ':"')
+                    json_str = json_str.replace(":  r'", ': "')
+                    
+                    json_str = json_str.replace("',", '",')
+                    json_str = json_str.replace("'\n", '"\n')
+                    json_str = json_str.replace("' \n", '" \n')
+                    json_str = json_str.replace("'}", '"}')
+
+                    json_str = json_str.replace("\\d", "\\\\d")
+                    json_str = json_str.replace("\\w", "\\\\w")
+                    json_str = json_str.replace("\\s", "\\\\s")
+                    json_str = json_str.replace("\\b", "\\\\b")
+                    json_str = json_str.replace("\\W", "\\\\W")
+                    json_str = json_str.replace("\\D", "\\\\D")
 
                     try:
                         parsed_data = json.loads(json_str)
-                        processed_data = post_process_types(
-                            parsed_data, chosen_func_obj)
+                        processed_data = post_process_types(parsed_data, chosen_function_object)
 
-                        objet_json = {"prompt": line.prompt}
-                        objet_json.update(processed_data)
+                        json_object = {"prompt": item.prompt}
+                        json_object.update(processed_data)
                     except json.JSONDecodeError as error:
-                        print(f"\n[ERROR] Failed to parse JSON: {error}")
-                        objet_json = {"prompt": line.prompt, "name": "fn_none"}
+                        print(f"\n\n{Color.RED.value}[ERROR] Failed to parse JSON: {error}{Color.RST.value}")
+                        json_object = {"prompt": item.prompt, "name": "fn_none"}
 
-                    resultats_finaux.append(objet_json)
-
-                    print("\n\n-----------------\n\n")
+                    final_results.append(json_object)
+                    print("\n-----------------\n")
                     break
 
-    output(output_filename, resultats_finaux)
+    output(output_filename, final_results)
