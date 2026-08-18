@@ -47,21 +47,26 @@ def build_prompt_func(data_function: list[ParsngFunctions]) -> str:
     return prompt_func
 
 
-def build_final_json_object(prompt_text: str, raw_json_str: str) -> dict[str, Any]:
-    """Builds the final structured dictionary containing the original prompt
+def post_process_types(parsed_data: dict[str, Any], chosen_func_obj: Any) -> dict[str, Any]:
+    if not chosen_func_obj or not hasattr(chosen_func_obj, 'parameters'):
+        return parsed_data
 
-    and the parsed function calling JSON, with strict typing and error handling.
-    """
-    final_obj: dict[str, Any] = {"prompt": prompt_text}
+    if "parameters" in parsed_data and isinstance(parsed_data["parameters"], dict):
+        for param_name, param_val in parsed_data["parameters"].items():
+            if param_name in chosen_func_obj.parameters:
+                expected_type = chosen_func_obj.parameters[param_name].type
+                try:
+                    if expected_type in ("number", "float"):
+                        parsed_data["parameters"][param_name] = float(
+                            param_val)
+                    elif expected_type == "int":
+                        parsed_data["parameters"][param_name] = int(param_val)
+                    elif expected_type == "string":
+                        parsed_data["parameters"][param_name] = str(param_val)
+                except (ValueError, TypeError):
+                    pass
 
-    try:
-        parsed_data = json.loads(raw_json_str)
-        final_obj.update(parsed_data)
-    except json.JSONDecodeError as error:
-        print(f"\n[ERROR] Failed to parse JSON: {error}")
-        final_obj["name"] = "fn_none"
-
-    return final_obj
+    return parsed_data
 
 
 def step_name(logits: NDArray[Any], logits_origin: NDArray[Any],
@@ -110,14 +115,10 @@ def step_name(logits: NDArray[Any], logits_origin: NDArray[Any],
             logits[int(token_id)] = logits_origin[int(token_id)]
 
 
-def step_test(logits: NDArray[Any], logits_origin: NDArray[Any],
-                    vocab: dict[int, str], llm: Any, send_prompt: list[int],
-                    chosen_function: Any) -> None:
-    logits[:] = -float("inf")
-    current_text: Any = llm.decode(send_prompt)
-        
+def get_authorized_chars_dynamic(type_name: str, write: bool) -> str:
+    if type_name == "key":
+        return 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_" ,:\n\t}'
 
-def get_authorized_chars(type_name: str, write: bool) -> str:
     if not write or type_name is None:
         return ('abcdefghijklmnopqrstuvwxyz'
                 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"{},. :\n\t-')
@@ -171,10 +172,13 @@ def step_parameters(logits: NDArray[Any], logits_origin: NDArray[Any],
         if idx_colon != -1:
             texte_apres_colon: Any = text_from_key[idx_colon + 1:]
             type_name = chosen_function.parameters[last_key_json].type
-            # print(f"\n[DEBUG] Clé: {last_key_json} | Type détecté: {type_name} | Texte après `:`: '{texte_apres_colon}'")
             write = should_continue_writing(type_name, texte_apres_colon)
+        else:
+            type_name = "key"
+    else:
+        type_name = None
 
-    caracteres_autorises: str = get_authorized_chars(type_name, write)
+    caracteres_autorises: str = get_authorized_chars_dynamic(type_name, write)
 
     for token_id, token_text in vocab.items():
         clean_text: Any = token_text.replace(
@@ -226,7 +230,8 @@ def run_inference(
                       f"{Color.WHITE.value}Token limit reached !!"
                       f"{Color.RESET.value}")
 
-                resultats_finaux.append(build_final_json_object(line.prompt, '{"name": "fn_none"}'))
+                resultats_finaux.append(
+                    {"prompt": line.prompt, "name": "fn_none"})
                 print("\n-----------------\n")
                 break
 
@@ -239,10 +244,8 @@ def run_inference(
                 step_name(logits, logits_origin, vocab,
                           name_fonc, llm, send_prompt)
             elif state == 2:
-                # step_parameters(logits, logits_origin, vocab,
-                #                 llm, send_prompt, chosen_func_obj)
-                step_test(logits, logits_origin, vocab,
-                          llm, send_prompt, chosen_func_obj)
+                step_parameters(logits, logits_origin, vocab,
+                                llm, send_prompt, chosen_func_obj)
 
             next_token = int(np.argmax(logits))
             send_prompt.append(next_token)
@@ -255,7 +258,6 @@ def run_inference(
             if state == 1:
                 full_text: Any = llm.decode(send_prompt)
                 name_func: str = full_text.split('"name": "')[-1]
-                print(f"----------{result}-----------")
                 if '"' in name_func:
                     nom_genere: str = name_func.replace('"', '').strip()
 
@@ -268,10 +270,9 @@ def run_inference(
                         send_prompt.extend(aide_tokens)
                         print(aide_json, end="", flush=True)
 
-                        json_str = '{\n  "name": "fn_none"\n}'
-                        resultats_finaux.append(build_final_json_object(
-                            line.prompt, json_str))
-                        break
+                        resultats_finaux.append(
+                            {"prompt": line.prompt, "name": "fn_none"})
+                        break  # Sort du while pour passer au prompt suivant dans la boucle for
 
                     state = 2
 
@@ -286,25 +287,14 @@ def run_inference(
                               f"{Color.GREEN.value}'{nom_genere}' "
                               f"{Color.WHITE.value} was not found. "
                               f"{Color.RESET.value}")
+                        resultats_finaux.append(
+                            {"prompt": line.prompt, "name": "fn_none"})
                         break
-
-                    # print(f"{Color.BLUE.value}\n\n[INFO] "
-                    #       f"{Color.WHITE.value}function has been found : "
-                    #       f"{Color.GREEN.value}'{chosen_func_obj.name}'."
-                    #       f"{Color.RESET.value}")
 
                     aide_json = ',\n  "parameters": {\n    '
                     aide_tokens = llm.encode(aide_json)[0].tolist()
                     send_prompt.extend(aide_tokens)
                     print(aide_json, end="", flush=True)
-
-                    if chosen_func_obj.parameters:
-                        premiere_cle = list(
-                            chosen_func_obj.parameters.keys())[0]
-                        aide_cle = f'"{premiere_cle}": '
-                        aide_cle_tokens = llm.encode(aide_cle)[0].tolist()
-                        send_prompt.extend(aide_cle_tokens)
-                        print(aide_cle, end="", flush=True)
 
             elif state == 2:
                 texte_actuel: Any = llm.decode(send_prompt)
@@ -317,7 +307,17 @@ def run_inference(
                     import re
                     json_str = re.sub(r':\s*r"', ': "', json_str)
 
-                    objet_json = build_final_json_object(line.prompt, json_str)
+                    try:
+                        parsed_data = json.loads(json_str)
+                        processed_data = post_process_types(
+                            parsed_data, chosen_func_obj)
+
+                        objet_json = {"prompt": line.prompt}
+                        objet_json.update(processed_data)
+                    except json.JSONDecodeError as error:
+                        print(f"\n[ERROR] Failed to parse JSON: {error}")
+                        objet_json = {"prompt": line.prompt, "name": "fn_none"}
+
                     resultats_finaux.append(objet_json)
 
                     print("\n\n-----------------\n\n")
