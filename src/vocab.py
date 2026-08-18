@@ -1,3 +1,5 @@
+"""Vocabulary management and tokenization testing script."""
+
 from llm_sdk import Small_LLM_Model  # type: ignore
 import os
 import json
@@ -6,6 +8,18 @@ from torch import Tensor
 
 
 def charge_vocab(llm: Any) -> Any:
+    """
+    Load the vocabulary file from the given LLM model.
+
+    Args:
+        llm: The large language model instance.
+
+    Returns:
+        A dictionary representing the loaded vocabulary.
+
+    Raises:
+        ValueError: If the file is not found or is invalid JSON.
+    """
     file_vocab: str = llm.get_path_to_vocab_file()
 
     try:
@@ -22,6 +36,9 @@ def charge_vocab(llm: Any) -> Any:
 
 
 def main() -> None:
+    """
+    Run the vocabulary test based on the ARGS environment variable.
+    """
     llm: Any = Small_LLM_Model()
     vocab: Any = charge_vocab(llm)
 
