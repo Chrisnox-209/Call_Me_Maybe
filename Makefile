@@ -4,7 +4,7 @@ MYPY_STRICT = --strict
 FLAKE_STRICT = --max-complexity=20
 MAIN = src/__main__.py
 
-.PHONY: all install run clean lint lint-strict debug vocab multi test
+.PHONY: all install run clean lint lint-strict debug vocab multi test cache
 
 all: run
 
@@ -41,6 +41,9 @@ vocab:
 
 multi:
 	@uv run python -m src --multi $(ARGS)
+
+cache:
+	@uv run python -m src --cache $(ARGS)
 
 test:
 	@uv run python -m src.test
