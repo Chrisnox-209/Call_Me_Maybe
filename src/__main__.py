@@ -65,11 +65,21 @@ if __name__ == "__main__":
     cache: bool
     visual: bool
 
-    (input_file, output_file, functions_definition,
-     model, multi, cache, visual) = check_argument()
+    try:
+        (input_file, output_file, functions_definition,
+         model, multi, cache, visual) = check_argument()
 
-    if multi:
-        model = select_model_interactive(model)
+        if multi:
+            model = select_model_interactive(model)
 
-    main(input_file, output_file, functions_definition,
-         model, cache, visual)
+        main(input_file, output_file, functions_definition,
+             model, cache, visual)
+
+    except KeyboardInterrupt:
+        print(f"\n{Color.ORANGE.value}The program was abruptly "
+              f"exited by the user.{Color.RST.value}")
+
+    except Exception as e:
+        print(f"\n{Color.RED.value}[CRITICAL ERROR]{Color.RST.value} {e}",
+              file=sys.stderr)
+        sys.exit(1)
