@@ -21,12 +21,15 @@ def get_cached_vocab(model_name: str) -> dict[int, str]:
     Caches the vocabulary based on the model name to avoid reloading it.
     """
     llm_temp = Small_LLM_Model(model_name=model_name)
-    vocab = reverse_vocab(charge_vocab(llm_temp))
+    vocab: dict[int, str] = reverse_vocab(charge_vocab(llm_temp))
     return dict(vocab)
 
 
 @lru_cache(maxsize=128)
-def _build_prompt_func_cached(functions_signature: tuple) -> str:
+def _build_prompt_func_cached(
+    functions_signature: tuple[tuple[str, str,
+                                     tuple[tuple[str, str], ...], str], ...]
+) -> str:
     """
     Internal cached function that processes hashable primitive tuples.
     """
@@ -63,7 +66,8 @@ def build_prompt_func(data_function: list[ParsngFunctions]) -> str:
     Construct the base prompt string for function calling by converting
     objects into a hashable structure for the cache.
     """
-    signature = tuple(
+    signature: tuple[tuple[str, str,
+                           tuple[tuple[str, str], ...], str], ...] = tuple(
         (
             f.name,
             f.description,
@@ -90,7 +94,8 @@ def post_process_types(
                                                   dict):
         for param_name, param_val in parsed_data["parameters"].items():
             if param_name in chosen_func_obj.parameters:
-                expected_type = chosen_func_obj.parameters[param_name].type
+                expected_type: Any = chosen_func_obj.parameters[
+                    param_name].type
                 try:
                     if expected_type == "number" or expected_type == "float":
                         parsed_data["parameters"][param_name] = float(
@@ -117,10 +122,10 @@ def step_name(logits: NDArray[Any], logits_origin: NDArray[Any],
                      'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"')
 
     current_text = llm.decode(generated_tokens)
-    current_name = current_text.split('"name": "')[-1]
+    current_name: Any = current_text.split('"name": "')[-1]
 
     for token_id, token_text in vocab.items():
-        clean_text = token_text.replace(' ', '').replace(
+        clean_text: str = token_text.replace(' ', '').replace(
             'Ġ', '').replace('Ċ', '').replace('<0x00>', '')
 
         if clean_text == "":
@@ -135,7 +140,7 @@ def step_name(logits: NDArray[Any], logits_origin: NDArray[Any],
         if not is_valid_char:
             continue
 
-        future_string = current_name + clean_text
+        future_string: Any = current_name + clean_text
         is_valid_string = False
 
         for name in allowed_names:
@@ -205,7 +210,7 @@ def should_continue_writing(expected_type: str, text_after_colon: str) -> bool:
     else:
         quote_count = 0
         index = 0
-        length = len(text_after_colon)
+        length: int = len(text_after_colon)
 
         while index < length:
             char = text_after_colon[index]
@@ -230,7 +235,7 @@ def step_parameters(logits: NDArray[Any], logits_origin: NDArray[Any],
     Force the AI to only generate valid parameters for the chosen function.
     """
     logits[:] = -float("inf")
-    current_text = llm.decode(generated_tokens)
+    current_text: Any = llm.decode(generated_tokens)
 
     last_key_found = None
     key_position = -1
@@ -239,17 +244,17 @@ def step_parameters(logits: NDArray[Any], logits_origin: NDArray[Any],
 
     if chosen_function and hasattr(chosen_function, 'parameters'):
         for key in chosen_function.parameters.keys():
-            idx = current_text.rfind(f'"{key}"')
+            idx: Any = current_text.rfind(f'"{key}"')
             if idx > key_position:
                 key_position = idx
                 last_key_found = key
 
     if last_key_found is not None:
-        text_from_key = current_text[key_position:]
-        idx_colon = text_from_key.find(":")
+        text_from_key: Any = current_text[key_position:]
+        idx_colon: Any = text_from_key.find(":")
 
         if idx_colon != -1:
-            text_after_colon = text_from_key[idx_colon + 1:]
+            text_after_colon: Any = text_from_key[idx_colon + 1:]
             expected_type = chosen_function.parameters[last_key_found].type
             is_writing_value = should_continue_writing(
                 expected_type, text_after_colon)
@@ -262,7 +267,7 @@ def step_parameters(logits: NDArray[Any], logits_origin: NDArray[Any],
         expected_type, is_writing_value)
 
     for token_id, token_text in vocab.items():
-        clean_text = token_text.replace(' ', '').replace(
+        clean_text: str = token_text.replace(' ', '').replace(
             'Ġ', '').replace('Ċ', '\n').replace('<0x00>', '')
 
         if clean_text == "":
@@ -298,14 +303,11 @@ def run_inference(
     function_tokens: list[int] = cached_encode(llm, function_prompt, cache)
     allowed_names: list[str] = lst_name_fonction(data_function)
 
-    helper_json_none = '\n}'
-    helper_tokens_none: list[int] = cached_encode(llm, helper_json_none, cache)
-
     helper_json_params = ',\n  "parameters": {\n    '
     helper_tokens_params: list[int] = cached_encode(llm, helper_json_params,
                                                     cache)
 
-    final_results: list = []
+    final_results: list[dict[str, Any]] = []
 
     for item in data_prompt:
         starter: str = f'Task: {item.prompt}\nJSON:\n{{\n  "name": "'
@@ -335,13 +337,14 @@ def run_inference(
                         f"{Color.RED.value}\n\n[ERROR] Token limit reached !!"
                         f"{Color.RST.value}")
                 final_results.append(
-                    {"prompt": item.prompt, "name": "fn_none"})
+                    {"prompt": item.prompt, "error": "LIMIT MAX TOKEN"})
                 if visual:
                     print("\n-----------------\n")
                 break
 
-            logits = np.array(llm.get_logits_from_input_ids(generated_tokens))
-            logits_origin = logits.copy()
+            logits: NDArray[Any] = np.array(
+                llm.get_logits_from_input_ids(generated_tokens))
+            logits_origin: NDArray[Any] = logits.copy()
 
             if state == 1:
                 step_name(logits, logits_origin, vocab,
@@ -349,11 +352,22 @@ def run_inference(
             elif state == 2:
                 step_parameters(logits, logits_origin, vocab,
                                 llm, generated_tokens, chosen_function_object)
+            if np.max(logits) == -float("inf"):
+                if visual:
+                    print(f"{Color.RED.value}\n\n[ERROR] Generation blocked "
+                          f"(lost model) !{Color.RST.value}")
+
+                final_results.append(
+                    {"prompt": item.prompt, "error": "No matching function"})
+
+                if visual:
+                    print("\n-----------------\n")
+                break
 
             next_token = int(np.argmax(logits))
             generated_tokens.append(next_token)
 
-            result_text = llm.decode([next_token])
+            result_text: str = llm.decode([next_token])
             if len(generated_tokens) > size_start_prompt:
                 if visual:
                     print(
@@ -361,24 +375,11 @@ def run_inference(
                         f"{Color.RST.value}", end="", flush=True)
 
             if state == 1:
-                full_text = llm.decode(generated_tokens)
-                name_generated = full_text.split('"name": "')[-1]
+                full_text: str = llm.decode(generated_tokens)
+                name_generated: str = full_text.split('"name": "')[-1]
 
                 if '"' in name_generated:
-                    clean_name = name_generated.replace('"', '').strip()
-
-                    if clean_name == "fn_none":
-                        generated_tokens.extend(helper_tokens_none)
-                        if visual:
-                            print(
-                                f"{Color.WHITE.value}{helper_json_none}"
-                                f"{Color.RST.value}", end="", flush=True)
-
-                        final_results.append(
-                            {"prompt": item.prompt, "name": "fn_none"})
-                        if visual:
-                            print("\n-----------------\n")
-                        break
+                    clean_name: str = name_generated.replace('"', '').strip()
 
                     state = 2
 
@@ -387,17 +388,6 @@ def run_inference(
                             chosen_function_object = func
                             break
 
-                    if chosen_function_object is None:
-                        if visual:
-                            print(
-                                f"{Color.RED.value}\n\n[ERROR] Function '"
-                                f"{clean_name}' not found.{Color.RST.value}")
-                        final_results.append(
-                            {"prompt": item.prompt, "name": "fn_none"})
-                        if visual:
-                            print("\n-----------------\n")
-                        break
-
                     generated_tokens.extend(helper_tokens_params)
                     if visual:
                         print(
@@ -405,14 +395,13 @@ def run_inference(
                             f"{Color.RST.value}", end="", flush=True)
 
             elif state == 2:
-                current_text = llm.decode(generated_tokens)
-                open_brackets = current_text.count('{')
-                closed_brackets = current_text.count('}')
+                current_text: str = llm.decode(generated_tokens)
+                open_brackets: int = current_text.count('{')
+                closed_brackets: int = current_text.count('}')
 
                 if open_brackets > 0 and open_brackets == closed_brackets:
-                    json_str = "{\n" + current_text.split("JSON:\n{")[-1]
+                    json_str: str = "{\n" + current_text.split("JSON:\n{")[-1]
 
-                    # Nettoyages rapides de chaînes
                     json_str = json_str.replace(': r"', ': "').replace(
                         ':r"', ':"').replace(':  r"', ': "')
                     json_str = json_str.replace(": r'", ': "').replace(
@@ -429,11 +418,11 @@ def run_inference(
                                 .replace("\\D", "\\\\D"))
 
                     try:
-                        parsed_data = json.loads(json_str)
-                        processed_data = post_process_types(
+                        parsed_data: Any = json.loads(json_str)
+                        processed_data: dict[str, Any] = post_process_types(
                             parsed_data, chosen_function_object)
 
-                        json_object = {"prompt": item.prompt}
+                        json_object: dict[str, str] = {"prompt": item.prompt}
                         json_object.update(processed_data)
                     except json.JSONDecodeError as error:
                         if visual:
@@ -441,8 +430,10 @@ def run_inference(
                                 f"\n\n{Color.RED.value}[ERROR] "
                                 "Failed to parse JSON: "
                                 f"{error}{Color.RST.value}")
+
                         json_object = {
-                            "prompt": item.prompt, "name": "fn_none"}
+                            "prompt": item.prompt,
+                            "error": "No matching function"}
 
                     final_results.append(json_object)
                     if visual:

@@ -117,17 +117,14 @@ def check_argument() -> tuple[Any, Any, Any, str, bool, bool, bool]:
     parser.add_argument(
         "--multi",
         action="store_true",
-        help="Interactively select the model"
     )
     parser.add_argument(
         "--cache",
         action="store_true",
-        help="Interactively select the model"
     )
     parser.add_argument(
         "--visual",
         action="store_true",
-        help="Interactively select the model"
     )
     args: argparse.Namespace = parser.parse_args()
     return (args.input, args.output, args.functions_definition,

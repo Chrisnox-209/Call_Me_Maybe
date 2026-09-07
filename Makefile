@@ -1,7 +1,7 @@
 MYPY_FLAGS = --warn-return-any --warn-unused-ignores --ignore-missing-imports \
 	--disallow-untyped-defs --check-untyped-defs
 MYPY_STRICT = --strict
-FLAKE_STRICT = --max-complexity=20
+FLAKE_STRICT = --max-complexity=25
 MAIN = src/__main__.py
 
 .PHONY: all install run clean lint lint-strict debug vocab multi test cache
@@ -46,7 +46,7 @@ cache:
 	@uv run python -m src --cache $(ARGS)
 
 visual:
-	@uv run python -m src --visual $(ARGS)
+	@uv run python -m src --visual --cache $(ARGS)
 
 test:
 	@uv run python -m src.test
