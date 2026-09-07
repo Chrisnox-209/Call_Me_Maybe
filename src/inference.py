@@ -1,6 +1,6 @@
 """Inference engine logic and token constrained generation."""
 
-from typing import Any
+from typing import Any, cast
 import json
 import numpy as np
 from numpy.typing import NDArray
@@ -13,6 +13,7 @@ from .utils import (
 
 
 _ENCODE_CACHE: dict[str, list[int]] = {}
+
 
 @lru_cache(maxsize=1)
 def get_cached_vocab(model_name: str) -> dict[int, str]:
@@ -59,7 +60,7 @@ def _build_prompt_func_cached(functions_signature: tuple) -> str:
 
 def build_prompt_func(data_function: list[ParsngFunctions]) -> str:
     """
-    Construct the base prompt string for function calling by converting 
+    Construct the base prompt string for function calling by converting
     objects into a hashable structure for the cache.
     """
     signature = tuple(
@@ -79,7 +80,7 @@ def post_process_types(
     parsed_data: dict[str, Any], chosen_func_obj: Any
 ) -> dict[str, Any]:
     """
-    Convert parsed JSON string values into their correct types 
+    Convert parsed JSON string values into their correct types
     (like int or float).
     """
     if not chosen_func_obj or not hasattr(chosen_func_obj, 'parameters'):
@@ -159,14 +160,14 @@ def cached_encode(llm: Any, text: str, use_cache: bool) -> list[int]:
     Encodes text, using a dictionary cache if use_cache is True.
     """
     if not use_cache:
-        return llm.encode(text)[0].tolist()
+        return cast(list[int], llm.encode(text)[0].tolist())
 
     if text not in _ENCODE_CACHE:
         _ENCODE_CACHE[text] = llm.encode(text)[0].tolist()
     return _ENCODE_CACHE[text]
 
 
-def get_authorized_chars_dynamic(expected_type: str,
+def get_authorized_chars_dynamic(expected_type: str | None,
                                  is_writing_value: bool) -> str:
     """
     Return a simple list of characters the AI is allowed to type right now.
@@ -257,7 +258,7 @@ def step_parameters(logits: NDArray[Any], logits_origin: NDArray[Any],
     else:
         expected_type = None
 
-    allowed_chars = get_authorized_chars_dynamic(
+    allowed_chars: str = get_authorized_chars_dynamic(
         expected_type, is_writing_value)
 
     for token_id, token_text in vocab.items():
@@ -283,30 +284,34 @@ def run_inference(
     data_function: list[ParsngFunctions],
     output_filename: str,
     model_name: str,
-    cache: bool
+    cache: bool,
+    visual: bool
 ) -> None:
     """
     The main loop that runs the AI model token by token for each test.
     Optimized to cache static components and tokenization overhead.
     """
     llm = Small_LLM_Model(model_name=model_name)
-    vocab = get_cached_vocab(model_name)
+    vocab: dict[int, str] = get_cached_vocab(model_name)
 
-    function_prompt = build_prompt_func(data_function)
-    function_tokens = cached_encode(llm, function_prompt, cache)
-    allowed_names = lst_name_fonction(data_function)
+    function_prompt: str = build_prompt_func(data_function)
+    function_tokens: list[int] = cached_encode(llm, function_prompt, cache)
+    allowed_names: list[str] = lst_name_fonction(data_function)
 
     helper_json_none = '\n}'
-    helper_tokens_none = cached_encode(llm, helper_json_none, cache)
+    helper_tokens_none: list[int] = cached_encode(llm, helper_json_none, cache)
 
     helper_json_params = ',\n  "parameters": {\n    '
-    helper_tokens_params = cached_encode(llm, helper_json_params, cache)
+    helper_tokens_params: list[int] = cached_encode(llm, helper_json_params,
+                                                    cache)
 
-    final_results = []
+    final_results: list = []
 
     for item in data_prompt:
-        starter = f'Task: {item.prompt}\nJSON:\n{{\n  "name": "'
-        generated_tokens = function_tokens + cached_encode(llm, starter, cache)
+        starter: str = f'Task: {item.prompt}\nJSON:\n{{\n  "name": "'
+        generated_tokens: list[int] = function_tokens + cached_encode(llm,
+                                                                      starter,
+                                                                      cache)
 
         state = 1
         chosen_function_object = None
@@ -314,22 +319,25 @@ def run_inference(
         token_count = 0
         max_tokens = 150
 
-        print(f"\n{Color.GREEN.value}\n\n[PROMPT] "
-              f"{Color.BLUE.value}{item.prompt}"
-              f"{Color.RST.value}\n"
-              f"{Color.WHITE.value}{{\n  \"name\": \"", end="", flush=True)
+        if visual:
+            print(f"\n{Color.GREEN.value}\n\n[PROMPT] "
+                  f"{Color.BLUE.value}{item.prompt}"
+                  f"{Color.RST.value}\n"
+                  f"{Color.WHITE.value}{{\n  \"name\": \"", end="", flush=True)
 
-        size_start_prompt = len(generated_tokens)
+        size_start_prompt: int = len(generated_tokens)
 
         while True:
             token_count += 1
             if token_count > max_tokens:
-                print(
-                    f"{Color.RED.value}\n\n[ERROR] Token limit reached !!"
-                    f"{Color.RST.value}")
+                if visual:
+                    print(
+                        f"{Color.RED.value}\n\n[ERROR] Token limit reached !!"
+                        f"{Color.RST.value}")
                 final_results.append(
                     {"prompt": item.prompt, "name": "fn_none"})
-                print("\n-----------------\n")
+                if visual:
+                    print("\n-----------------\n")
                 break
 
             logits = np.array(llm.get_logits_from_input_ids(generated_tokens))
@@ -347,8 +355,10 @@ def run_inference(
 
             result_text = llm.decode([next_token])
             if len(generated_tokens) > size_start_prompt:
-                print(
-                    f"{Color.WHITE.value}{result_text}{Color.RST.value}", end="", flush=True)
+                if visual:
+                    print(
+                        f"{Color.WHITE.value}{result_text}"
+                        f"{Color.RST.value}", end="", flush=True)
 
             if state == 1:
                 full_text = llm.decode(generated_tokens)
@@ -359,13 +369,15 @@ def run_inference(
 
                     if clean_name == "fn_none":
                         generated_tokens.extend(helper_tokens_none)
-                        print(
-                            f"{Color.WHITE.value}{helper_json_none}"
-                            f"{Color.RST.value}", end="", flush=True)
+                        if visual:
+                            print(
+                                f"{Color.WHITE.value}{helper_json_none}"
+                                f"{Color.RST.value}", end="", flush=True)
 
                         final_results.append(
                             {"prompt": item.prompt, "name": "fn_none"})
-                        print("\n-----------------\n")
+                        if visual:
+                            print("\n-----------------\n")
                         break
 
                     state = 2
@@ -376,18 +388,21 @@ def run_inference(
                             break
 
                     if chosen_function_object is None:
-                        print(
-                            f"{Color.RED.value}\n\n[ERROR] Function '"
-                            f"{clean_name}' not found.{Color.RST.value}")
+                        if visual:
+                            print(
+                                f"{Color.RED.value}\n\n[ERROR] Function '"
+                                f"{clean_name}' not found.{Color.RST.value}")
                         final_results.append(
                             {"prompt": item.prompt, "name": "fn_none"})
-                        print("\n-----------------\n")
+                        if visual:
+                            print("\n-----------------\n")
                         break
 
                     generated_tokens.extend(helper_tokens_params)
-                    print(
-                        f"{Color.WHITE.value}{helper_json_params}"
-                        f"{Color.RST.value}", end="", flush=True)
+                    if visual:
+                        print(
+                            f"{Color.WHITE.value}{helper_json_params}"
+                            f"{Color.RST.value}", end="", flush=True)
 
             elif state == 2:
                 current_text = llm.decode(generated_tokens)
@@ -421,15 +436,17 @@ def run_inference(
                         json_object = {"prompt": item.prompt}
                         json_object.update(processed_data)
                     except json.JSONDecodeError as error:
-                        print(
-                            f"\n\n{Color.RED.value}[ERROR] "
-                            "Failed to parse JSON: "
-                            f"{error}{Color.RST.value}")
+                        if visual:
+                            print(
+                                f"\n\n{Color.RED.value}[ERROR] "
+                                "Failed to parse JSON: "
+                                f"{error}{Color.RST.value}")
                         json_object = {
                             "prompt": item.prompt, "name": "fn_none"}
 
                     final_results.append(json_object)
-                    print("\n-----------------\n")
+                    if visual:
+                        print("\n-----------------\n")
                     break
 
     output(output_filename, final_results)

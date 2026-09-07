@@ -26,7 +26,8 @@ def create_functions_definition() -> None:
         },
         {
             "name": "fn_substitute_string_with_regex",
-            "description": "Replace substrings matching a regex with a replacement string.",
+            "description": "Replace substrings matching a regex with a "
+            "replacement string.",
             "parameters": {
                 "source_string": {"type": "string"},
                 "regex": {"type": "string"},
@@ -37,19 +38,23 @@ def create_functions_definition() -> None:
         {
             "name": "fn_set_alarm",
             "description": "Set an alarm for a specific time.",
-            "parameters": {"time": {"type": "string"}, "label": {"type": "string"}},
+            "parameters": {"time": {"type": "string"},
+                           "label": {"type": "string"}},
             "returns": {"type": "none"}
         },
         {
             "name": "fn_send_email",
             "description": "Send an email.",
-            "parameters": {"to": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"}},
+            "parameters": {"to": {"type": "string"},
+                           "subject": {"type": "string"},
+                           "body": {"type": "string"}},
             "returns": {"type": "none"}
         },
         {
             "name": "fn_play_music",
             "description": "Play a specific song.",
-            "parameters": {"song": {"type": "string"}, "artist": {"type": "string"}},
+            "parameters": {"song": {"type": "string"},
+                           "artist": {"type": "string"}},
             "returns": {"type": "none"}
         },
         {
@@ -61,19 +66,23 @@ def create_functions_definition() -> None:
         {
             "name": "fn_book_flight",
             "description": "Book a flight.",
-            "parameters": {"destination": {"type": "string"}, "date": {"type": "string"}},
+            "parameters": {"destination": {"type": "string"},
+                           "date": {"type": "string"}},
             "returns": {"type": "none"}
         },
         {
             "name": "fn_create_calendar_event",
             "description": "Create a calendar event.",
-            "parameters": {"title": {"type": "string"}, "date": {"type": "string"}, "time": {"type": "string"}},
+            "parameters": {"title": {"type": "string"},
+                           "date": {"type": "string"},
+                           "time": {"type": "string"}},
             "returns": {"type": "none"}
         },
         {
             "name": "fn_translate_text",
             "description": "Translate text.",
-            "parameters": {"text": {"type": "string"}, "target_language": {"type": "string"}},
+            "parameters": {"text": {"type": "string"},
+                           "target_language": {"type": "string"}},
             "returns": {"type": "none"}
         }
     ]
@@ -86,13 +95,16 @@ def create_prompts_tests() -> None:
     prompts: list[dict[str, str]] = [
         {"prompt": "What is the weather like in Paris?"},
         {"prompt": "Calculate the sum of 5 and 10"},
-        {"prompt": "Replace 'apple' with 'orange' in 'I have an apple' using a regex"},
+        {"prompt": "Replace 'apple' with 'orange' in 'I have an apple' "
+         "using a regex"},
         {"prompt": "Set an alarm for 08:00 AM labeled Wake Up"},
-        {"prompt": "Send an email to john@example.com with subject Hello and body How are you?"},
+        {"prompt": "Send an email to john@example.com with subject Hello "
+         "and body How are you?"},
         {"prompt": "Play Shape of You by Ed Sheeran"},
         {"prompt": "Turn on the lights in the living room"},
         {"prompt": "Book a flight to Tokyo on 2024-12-01"},
-        {"prompt": "Create an event called Doctor Appointment on 2024-10-15 at 14:00"},
+        {"prompt": "Create an event called Doctor Appointment "
+         "on 2024-10-15 at 14:00"},
         {"prompt": "Translate 'Hello world' into French"}
     ]
     with open(PROMPTS_FILE, "w", encoding="utf-8") as f:
@@ -103,14 +115,14 @@ def run_test() -> None:
     """Runs the main program and compares output with expected result."""
     os.makedirs("data/input", exist_ok=True)
     os.makedirs("data/output", exist_ok=True)
-    
     print("1. Creating test files...")
     create_functions_definition()
     create_prompts_tests()
 
     print("2. Running the model (this may take a moment)...")
     try:
-        run_main(PROMPTS_FILE, OUTPUT_FILE, FUNCTIONS_FILE, "Qwen/Qwen3-0.6B")
+        run_main(PROMPTS_FILE, OUTPUT_FILE, FUNCTIONS_FILE, "Qwen/Qwen3-0.6B",
+                 True, True)
     except Exception as e:
         print(f"\n{Color.RED.value}[ERROR]{Color.RST.value} "
               f"The program encountered an error: {e}")
@@ -143,7 +155,8 @@ def run_test() -> None:
             }
         },
         {
-            "prompt": "Replace 'apple' with 'orange' in 'I have an apple' using a regex",
+            "prompt": "Replace 'apple' with 'orange' in 'I have an apple' "
+            "using a regex",
             "name": "fn_substitute_string_with_regex",
             "parameters": {
                 "source_string": "I have an apple",
@@ -160,7 +173,8 @@ def run_test() -> None:
             }
         },
         {
-            "prompt": "Send an email to john@example.com with subject Hello and body How are you?",
+            "prompt": "Send an email to john@example.com with subject "
+            "Hello and body How are you?",
             "name": "fn_send_email",
             "parameters": {
                 "to": "john.example.com",
@@ -192,7 +206,8 @@ def run_test() -> None:
             }
         },
         {
-            "prompt": "Create an event called Doctor Appointment on 2024-10-15 at 14:00",
+            "prompt": "Create an event called Doctor Appointment on "
+            "2024-10-15 at 14:00",
             "name": "fn_create_calendar_event",
             "parameters": {
                 "title": "Doctor Appointment",

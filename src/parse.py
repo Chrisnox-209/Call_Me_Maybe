@@ -89,7 +89,7 @@ def check_output(output: str) -> bool:
     return True
 
 
-def check_argument() -> tuple[Any, Any, Any, str, bool, bool]:
+def check_argument() -> tuple[Any, Any, Any, str, bool, bool, bool]:
     """
     Parse command line arguments for the application.
 
@@ -124,9 +124,14 @@ def check_argument() -> tuple[Any, Any, Any, str, bool, bool]:
         action="store_true",
         help="Interactively select the model"
     )
+    parser.add_argument(
+        "--visual",
+        action="store_true",
+        help="Interactively select the model"
+    )
     args: argparse.Namespace = parser.parse_args()
     return (args.input, args.output, args.functions_definition,
-            args.model, args.multi, args.cache)
+            args.model, args.multi, args.cache, args.visual)
 
 
 def json_to_data(file: str) -> Any:

@@ -12,7 +12,7 @@ import sys
 
 
 def main(input: str, output: str, functions_definition: str,
-         model: str, cache: bool = False) -> None:
+         model: str, cache: bool, visual: bool) -> None:
     """
     Execute the main application flow.
 
@@ -52,7 +52,8 @@ def main(input: str, output: str, functions_definition: str,
     except ValueError as e:
         print(f"{Color.RED.value}[ERROR]{Color.RST.value} {e}")
         sys.exit(1)
-    run_inference(parse_prompt, parse_function, output, model, cache)
+    run_inference(parse_prompt, parse_function, output,
+                  model, cache, visual)
 
 
 if __name__ == "__main__":
@@ -62,11 +63,13 @@ if __name__ == "__main__":
     model: str
     multi: bool
     cache: bool
+    visual: bool
 
     (input_file, output_file, functions_definition,
-     model, multi, cache) = check_argument()
+     model, multi, cache, visual) = check_argument()
 
     if multi:
         model = select_model_interactive(model)
 
-    main(input_file, output_file, functions_definition, model, cache)
+    main(input_file, output_file, functions_definition,
+         model, cache, visual)

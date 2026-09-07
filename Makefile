@@ -45,5 +45,8 @@ multi:
 cache:
 	@uv run python -m src --cache $(ARGS)
 
+visual:
+	@uv run python -m src --visual $(ARGS)
+
 test:
 	@uv run python -m src.test
