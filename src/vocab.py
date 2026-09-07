@@ -40,7 +40,6 @@ def main() -> None:
     Run the vocabulary test based on the ARGS environment variable.
     """
     llm: Any = Small_LLM_Model()
-    vocab: Any = charge_vocab(llm)
 
     word: str = os.environ["ARGS"]
 
@@ -51,21 +50,12 @@ def main() -> None:
             for tok in tokens[0].tolist()
         ]
 
-        id_lst: list[int] = []
-
-        for text in vocab.keys():
-            for w in subword:
-                if w == text:
-                    id_lst.append(vocab[text])
-
         print(
             f"\033[1m\033[32m[{word}]: \n"
             f"\033[1m\033[35mTOKEN(S) \033[34m--> "
             f"\033[0m\033[36m{tokens[0].tolist()}\n"
             f"\033[1m\033[35mSUBWORD\033[34m--> "
             f"\033[0m\033[36m{subword}\n"
-            f"\033[1m\033[35mID_VOCAB\033[34m--> "
-            f"\033[0m\033[36m{id_lst}\n\n"
         )
 
     except Exception as error:
