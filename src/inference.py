@@ -1,53 +1,95 @@
 """Inference engine logic and token constrained generation."""
 
-from typing import Any, cast
+from functools import lru_cache
 import json
+from typing import Optional, Union, cast
+
+from llm_sdk import Small_LLM_Model  # type: ignore
 import numpy as np
 from numpy.typing import NDArray
-from llm_sdk import Small_LLM_Model  # type: ignore
+from parse import TypeDef
+
 from .parse import ParsngFunctions, ParsingPompt
-from functools import lru_cache
 from .utils import (
-    charge_vocab, reverse_vocab, lst_name_fonction, output, Color
+    Color,
+    charge_vocab,
+    lst_name_fonction,
+    output,
+    reverse_vocab,
 )
 
-
 _ENCODE_CACHE: dict[str, list[int]] = {}
+ParsedParamValue = Union[str, int, float]
 
 
 @lru_cache(maxsize=1)
 def get_cached_vocab(model_name: str) -> dict[int, str]:
+    """Retrieve and cache the model vocabulary dictionary.
+
+    Args:
+        model_name: The identifier of the model.
+
+    Returns:
+        A dictionary mapping token IDs to string representations.
     """
-    Caches the vocabulary based on the model name to avoid reloading it.
-    """
-    llm_temp = Small_LLM_Model(model_name=model_name)
-    vocab: dict[int, str] = reverse_vocab(charge_vocab(llm_temp))
-    return dict(vocab)
+    llm_temp: Small_LLM_Model = Small_LLM_Model(model_name=model_name)
+    vocab_raw: dict[str, int] = charge_vocab(llm_temp)
+    vocab_reversed: dict[int, str] = reverse_vocab(vocab_raw)
+    return dict(vocab_reversed)
 
 
-@lru_cache(maxsize=128)
-def build_prompt_func_cached(
-    functions_signature: tuple[tuple[str, str,
-                                     tuple[tuple[str, str], ...], str], ...]
-) -> str:
+def cached_encode(
+    llm: Small_LLM_Model, text: str, use_cache: bool
+) -> list[int]:
+    """Encode a string into token identifiers using an optional cache.
+
+    Args:
+        llm: The language model instance.
+        text: The string to tokenize.
+        use_cache: Flag indicating whether to store/retrieve from cache.
+
+    Returns:
+        The sequence of token identifiers.
     """
-    Internal cached function that processes hashable primitive tuples.
+    if not use_cache:
+        raw_tokens: NDArray[np.int64] = llm.encode(text)[0]
+        token_list: list[int] = raw_tokens.tolist()
+        return token_list
+
+    if text not in _ENCODE_CACHE:
+        raw_tokens = llm.encode(text)[0]
+        _ENCODE_CACHE[text] = raw_tokens.tolist()
+
+    return _ENCODE_CACHE[text]
+
+
+def build_prompt_func(data_function: list[ParsngFunctions]) -> str:
+    """Build the base system prompt listing all available functions.
+
+    Args:
+        data_function: List of parsed function definition objects.
+
+    Returns:
+        The constructed system prompt string.
     """
-    prompt_func = (
+    prompt: str = (
         "You are an expert AI API router. You must map the user's task "
         "to the correct function.\n\n"
         "AVAILABLE FUNCTIONS:\n"
     )
 
-    for name, description, params_tuple, returns_type in functions_signature:
-        prompt_func += f"- name: {name}\n"
-        prompt_func += f"  description: {description}\n"
-        prompt_func += "  parameters:\n"
-        for param_name, param_type in params_tuple:
-            prompt_func += f"    - {param_name}: {param_type}\n"
-        prompt_func += f"  returns: {returns_type}\n\n"
+    for func in data_function:
+        prompt += f"- name: {func.name}\n"
+        prompt += f"  description: {func.description}\n"
+        prompt += "  parameters:\n"
 
-    prompt_func += (
+        for param_name, param_obj in func.parameters.items():
+            param_type_str: str = str(param_obj.type)
+            prompt += f"    - {param_name}: {param_type_str}\n"
+
+        prompt += f"  returns: {func.returns.type}\n\n"
+
+    prompt += (
         "EXAMPLES:\n"
         "Task: What is the weather like in Paris?\n"
         "JSON:\n"
@@ -58,230 +100,428 @@ def build_prompt_func_cached(
         "  }\n"
         "}\n\n"
     )
-    return prompt_func
+    return prompt
 
 
-def build_prompt_func(data_function: list[ParsngFunctions]) -> str:
+def find_function_by_name(
+    data_function: list[ParsngFunctions], target_name: str
+) -> Optional[ParsngFunctions]:
+    """Locate a function definition matching a given name.
+
+    Args:
+        data_function: List of parsed function definitions.
+        target_name: The name of the target function.
+
+    Returns:
+        The matching function object if found, otherwise None.
     """
-    Construct the base prompt string for function calling by converting
-    objects into a hashable structure for the cache.
+    for func in data_function:
+        if func.name == target_name:
+            return func
+    return None
+
+
+def clean_token_representation(raw_token: str) -> str:
+    """Sanitize internal tokenizer representations into normal characters.
+
+    Args:
+        raw_token: The string token from the vocabulary.
+
+    Returns:
+        The sanitized string.
     """
-    signature: tuple[tuple[str, str,
-                           tuple[tuple[str, str], ...], str], ...] = tuple(
-        (
-            f.name,
-            f.description,
-            tuple((p_name, p_obj.type)
-                  for p_name, p_obj in f.parameters.items()),
-            f.returns.type
-        )
-        for f in data_function
-    )
-    return build_prompt_func_cached(signature)
+    token: str = raw_token.replace(" ", " ")
+    token = token.replace("Ġ", " ")
+    token = token.replace("Ċ", "\n")
+    token = token.replace("<0x00>", "")
+    return token
 
 
-def post_process_types(
-    parsed_data: dict[str, Any], chosen_func_obj: Any
-) -> dict[str, Any]:
-    """
-    Convert parsed JSON string values into their correct types
-    (like int or float).
-    """
-    if not chosen_func_obj or not hasattr(chosen_func_obj, 'parameters'):
-        return parsed_data
+def mask_logits_for_function_name(
+    logits: NDArray[np.float64],
+    original_logits: NDArray[np.float64],
+    vocab: dict[int, str],
+    allowed_names: list[str],
+    current_prefix: str,
+) -> None:
+    """Mask logits to constrain next tokens to valid function names.
 
-    if "parameters" in parsed_data and isinstance(parsed_data["parameters"],
-                                                  dict):
-        for param_name, param_val in parsed_data["parameters"].items():
-            if param_name in chosen_func_obj.parameters:
-                expected_type: Any = chosen_func_obj.parameters[
-                    param_name].type
-                try:
-                    if expected_type == "number" or expected_type == "float":
-                        parsed_data["parameters"][param_name] = float(
-                            param_val)
-                    elif expected_type == "int":
-                        parsed_data["parameters"][param_name] = int(param_val)
-                    elif expected_type == "string":
-                        parsed_data["parameters"][param_name] = str(param_val)
-                except (ValueError, TypeError):
-                    pass
-
-    return parsed_data
-
-
-def step_name(logits: NDArray[Any], logits_origin: NDArray[Any],
-              vocab: dict[int, str], allowed_names: list[str], llm: Any,
-              generated_tokens: list[int]) -> None:
-    """
-    Force the AI to only generate a valid function name from our list.
+    Args:
+        logits: Target logit array to be updated in-place.
+        original_logits: Untouched initial logit array.
+        vocab: The vocabulary mapping IDs to text fragments.
+        allowed_names: List of allowed function name strings.
+        current_prefix: Name characters typed so far by the engine.
     """
     logits[:] = -float("inf")
 
-    allowed_chars = ('abcdefghijklmnopqrstuvwxyz'
-                     'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"')
-
-    current_text = llm.decode(generated_tokens)
-    current_name: Any = current_text.split('"name": "')[-1]
-
-    for token_id, token_text in vocab.items():
-        clean_text: str = token_text.replace(' ', '').replace(
-            'Ġ', '').replace('Ċ', '').replace('<0x00>', '')
-
+    for token_id, raw_token_text in vocab.items():
+        clean_text: str = clean_token_representation(raw_token_text)
         if clean_text == "":
             continue
 
-        is_valid_char = True
-        for char in clean_text:
-            if char not in allowed_chars:
-                is_valid_char = False
+        future_string: str = current_prefix + clean_text
+        is_candidate_valid: bool = False
+
+        for target_name in allowed_names:
+            if target_name.startswith(future_string):
+                is_candidate_valid = True
                 break
 
-        if not is_valid_char:
+            full_target_with_quote: str = target_name + '"'
+            if full_target_with_quote.startswith(future_string):
+                is_candidate_valid = True
+                break
+
+        if is_candidate_valid:
+            logits[int(token_id)] = original_logits[int(token_id)]
+
+
+def mask_logits_for_value(
+    logits: NDArray[np.float64],
+    original_logits: NDArray[np.float64],
+    vocab: dict[int, str],
+    expected_type: str,
+) -> None:
+    """Mask logits to restrict token generation based on the parameter type.
+
+    Args:
+        logits: Target logit array to be updated in-place.
+        original_logits: Untouched initial logit array.
+        vocab: The vocabulary mapping IDs to text fragments.
+        expected_type: The expected data type (string, int, float, number).
+    """
+    logits[:] = -float("inf")
+
+    numeric_chars: str = "0123456789.-,\n\t "
+    integer_chars: str = "0123456789-,\n\t "
+
+    for token_id, raw_token_text in vocab.items():
+        clean_text: str = clean_token_representation(raw_token_text)
+        if clean_text == "":
             continue
 
-        future_string: Any = current_name + clean_text
-        is_valid_string = False
+        is_allowed: bool = True
 
-        for name in allowed_names:
-            if name.startswith(future_string):
-                is_valid_string = True
-                break
+        if expected_type in ("number", "float"):
+            for char in clean_text:
+                if char not in numeric_chars:
+                    is_allowed = False
+                    break
+        elif expected_type == "int":
+            for char in clean_text:
+                if char not in integer_chars:
+                    is_allowed = False
+                    break
 
-            if name == current_name and clean_text == '"':
-                is_valid_string = True
-                break
-
-            if future_string == name + '"':
-                is_valid_string = True
-                break
-
-        if is_valid_string:
-            logits[int(token_id)] = logits_origin[int(token_id)]
+        if is_allowed:
+            logits[int(token_id)] = original_logits[int(token_id)]
 
 
-def cached_encode(llm: Any, text: str, use_cache: bool) -> list[int]:
+def convert_value_to_type(
+    raw_value: str, expected_type: str
+) -> ParsedParamValue:
+    """Cast a raw string value into its declared Python primitive type.
+
+    Args:
+        raw_value: The generated parameter text.
+        expected_type: The formal type specification.
+
+    Returns:
+        The cast value or the stripped original string on failure.
     """
-    Encodes text, using a dictionary cache if use_cache is True.
-    """
-    if not use_cache:
-        return cast(list[int], llm.encode(text)[0].tolist())
+    cleaned_string: str = raw_value.strip()
 
-    if text not in _ENCODE_CACHE:
-        _ENCODE_CACHE[text] = llm.encode(text)[0].tolist()
-    return _ENCODE_CACHE[text]
-
-
-def get_authorized_chars_dynamic(expected_type: str | None,
-                                 is_writing_value: bool) -> str:
-    """
-    Return a simple list of characters the AI is allowed to type right now.
-    """
-    if expected_type == "key":
-        return ('abcdefghijklmnopqrstuvwxyz'
-                'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_" ,:\n\t}')
-
-    if is_writing_value is False or expected_type is None:
-        return ('abcdefghijklmnopqrstuvwxyz'
-                'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"{},. :\n\t-\\')
-
-    if expected_type == "number" or expected_type == "float":
-        return '0123456789.-, \n}'
+    if expected_type in ("number", "float"):
+        cleaned_num: str = (
+            cleaned_string.replace(",", "").replace("\n", "").strip()
+        )
+        try:
+            return float(cleaned_num)
+        except ValueError:
+            return 0.0
 
     if expected_type == "int":
-        return '0123456789-, \n}'
+        cleaned_int: str = (
+            cleaned_string.replace(",", "").replace("\n", "").strip()
+        )
+        try:
+            return int(cleaned_int)
+        except ValueError:
+            return 0
 
-    if expected_type == "string":
-        return ('abcdefghijklmnopqrstuvwxyz'
-                'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_ -.,!?\'"\n}\\[]+*^$|()')
+    if cleaned_string.endswith(","):
+        cleaned_string = cleaned_string[:-1].strip()
 
-    return ('abcdefghijklmnopqrstuvwxyz'
-            'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"{},. :\n\t-\\')
+    if cleaned_string.endswith('"'):
+        cleaned_string = cleaned_string[:-1]
+
+    if cleaned_string.startswith('"'):
+        cleaned_string = cleaned_string[1:]
+
+    return cleaned_string
 
 
-def should_continue_writing(expected_type: str, text_after_colon: str) -> bool:
+def generate_function_name(
+    llm: Small_LLM_Model,
+    vocab: dict[int, str],
+    allowed_names: list[str],
+    prompt_tokens: list[int],
+    visual: bool,
+) -> tuple[str, list[int]]:
+    """Constrain generation until a complete function name is produced.
+
+    Args:
+        llm: The language model instance.
+        vocab: Model vocabulary dictionary.
+        allowed_names: List of allowed function names.
+        prompt_tokens: The input sequence tokens accumulated so far.
+        visual: Flag to display generated tokens to standard output.
+
+    Returns:
+        A tuple with the generated function name and updated token sequence.
     """
-    Check if the AI is still writing the value, or if it is finished.
+    accumulated_tokens: list[int] = list(prompt_tokens)
+    current_name: str = ""
+
+    while True:
+        raw_logits: NDArray[np.float64] = np.array(
+            llm.get_logits_from_input_ids(accumulated_tokens),
+            dtype=np.float64,
+        )
+        filtered_logits: NDArray[np.float64] = raw_logits.copy()
+
+        mask_logits_for_function_name(
+            filtered_logits,
+            raw_logits,
+            vocab,
+            allowed_names,
+            current_name,
+        )
+
+        next_token_id: int = int(np.argmax(filtered_logits))
+        accumulated_tokens.append(next_token_id)
+
+        token_text: str = clean_token_representation(vocab[next_token_id])
+
+        if visual:
+            print(
+                f"{Color.WHITE.value}{token_text}{Color.RST.value}",
+                end="",
+                flush=True,
+            )
+
+        if '"' in token_text:
+            parts: list[str] = token_text.split('"')
+            current_name = current_name + parts[0]
+            break
+
+        current_name = current_name + token_text
+
+    return current_name.strip(), accumulated_tokens
+
+
+def generate_parameter_value(
+    llm: Small_LLM_Model,
+    vocab: dict[int, str],
+    expected_type: str,
+    prompt_tokens: list[int],
+    visual: bool,
+) -> tuple[str, list[int]]:
+    """Constrain generation of a single parameter value until its delimiter.
+
+    Args:
+        llm: The language model instance.
+        vocab: Model vocabulary dictionary.
+        expected_type: The declared type of the target parameter.
+        prompt_tokens: Current sequence tokens.
+        visual: Flag to display generated tokens to standard output.
+
+    Returns:
+        A tuple with the value string and the updated token sequence.
     """
-    if expected_type in ("number", "float", "int"):
-        for char in text_after_colon:
-            if char in (",", "}"):
-                return False
-    else:
-        quote_count = 0
-        index = 0
-        length: int = len(text_after_colon)
+    accumulated_tokens: list[int] = list(prompt_tokens)
+    value_text: str = ""
+    max_value_tokens: int = 60
+    step_count: int = 0
 
-        while index < length:
-            char = text_after_colon[index]
-            if char == '\\':
-                index += 2
-                continue
-            if char == '"':
-                quote_count += 1
-            index += 1
+    while step_count < max_value_tokens:
+        step_count += 1
+        raw_logits: NDArray[np.float64] = np.array(
+            llm.get_logits_from_input_ids(accumulated_tokens),
+            dtype=np.float64,
+        )
+        filtered_logits: NDArray[np.float64] = raw_logits.copy()
 
-        if quote_count >= 2:
-            return False
+        mask_logits_for_value(
+            filtered_logits, raw_logits, vocab, expected_type
+        )
 
-    return True
+        next_token_id: int = int(np.argmax(filtered_logits))
+        accumulated_tokens.append(next_token_id)
 
+        token_text: str = clean_token_representation(vocab[next_token_id])
 
-def step_parameters(logits: NDArray[Any], logits_origin: NDArray[Any],
-                    vocab: dict[int, str], llm: Any,
-                    generated_tokens: list[int],
-                    chosen_function: Any) -> None:
-    """
-    Force the AI to only generate valid parameters for the chosen function.
-    """
-    logits[:] = -float("inf")
-    current_text: Any = llm.decode(generated_tokens)
+        if visual:
+            print(
+                f"{Color.WHITE.value}{token_text}{Color.RST.value}",
+                end="",
+                flush=True,
+            )
 
-    last_key_found = None
-    key_position = -1
-    expected_type = None
-    is_writing_value = True
-
-    if chosen_function and hasattr(chosen_function, 'parameters'):
-        for key in chosen_function.parameters.keys():
-            idx: Any = current_text.rfind(f'"{key}"')
-            if idx > key_position:
-                key_position = idx
-                last_key_found = key
-
-    if last_key_found is not None:
-        text_from_key: Any = current_text[key_position:]
-        idx_colon: Any = text_from_key.find(":")
-
-        if idx_colon != -1:
-            text_after_colon: Any = text_from_key[idx_colon + 1:]
-            expected_type = chosen_function.parameters[last_key_found].type
-            is_writing_value = should_continue_writing(
-                expected_type, text_after_colon)
-        else:
-            expected_type = "key"
-    else:
-        expected_type = None
-
-    allowed_chars: str = get_authorized_chars_dynamic(
-        expected_type, is_writing_value)
-
-    for token_id, token_text in vocab.items():
-        clean_text: str = token_text.replace(' ', '').replace(
-            'Ġ', '').replace('Ċ', '\n').replace('<0x00>', '')
-
-        if clean_text == "":
-            logits[int(token_id)] = logits_origin[int(token_id)]
-            continue
-
-        is_valid = True
-        for char in clean_text:
-            if char not in allowed_chars:
-                is_valid = False
+        if expected_type == "string":
+            if '"' in token_text:
+                parts: list[str] = token_text.split('"')
+                value_text = value_text + parts[0]
                 break
+            value_text = value_text + token_text
+        else:
+            if (
+                "," in token_text
+                or "\n" in token_text
+                or "}" in token_text
+            ):
+                cleaned_part: str = (
+                    token_text.replace(",", "")
+                    .replace("\n", "")
+                    .replace("}", "")
+                )
+                value_text = value_text + cleaned_part
+                break
+            value_text = value_text + token_text
 
-            if is_valid:
-                logits[int(token_id)] = logits_origin[int(token_id)]
+    return value_text, accumulated_tokens
+
+
+def process_single_task(
+    item: ParsingPompt,
+    llm: Small_LLM_Model,
+    vocab: dict[int, str],
+    function_tokens: list[int],
+    data_function: list[ParsngFunctions],
+    allowed_names: list[str],
+    cache: bool,
+    visual: bool,
+) -> dict[str, Union[str, dict[str, ParsedParamValue]]]:
+    """Execute the structured generation pipeline for a single prompt.
+
+    Args:
+        item: The prompt item to process.
+        llm: The language model instance.
+        vocab: Vocabulary dictionary.
+        function_tokens: Cached token representations of available functions.
+        data_function: Function definitions list.
+        allowed_names: Valid function names list.
+        cache: Cache flag.
+        visual: Print output flag.
+
+    Returns:
+        A dictionary containing the parsed function and parameter values.
+    """
+    starter: str = f'Task: {item.prompt}\nJSON:\n{{\n  "name": "'
+    task_starter_tokens: list[int] = cached_encode(llm, starter, cache)
+
+    active_tokens: list[int] = []
+    for token_id in function_tokens:
+        active_tokens.append(token_id)
+    for token_id in task_starter_tokens:
+        active_tokens.append(token_id)
+
+    if visual:
+        print(
+            f"\n\n{Color.GREEN.value}[PROMPT] {Color.BLUE.value}{item.prompt}"
+            f'{Color.RST.value}\n{Color.WHITE.value}{{\n  "name": "',
+            end="",
+            flush=True,
+        )
+    func_name: str
+    func_name, active_tokens = generate_function_name(
+        llm, vocab, allowed_names, active_tokens, visual
+    )
+
+    chosen_func: Optional[ParsngFunctions] = find_function_by_name(
+        data_function, func_name
+    )
+    if chosen_func is None:
+        return {"prompt": str(item.prompt), "error": "Function not found"}
+
+    result_payload: dict[str, Union[str, dict[str, ParsedParamValue]]] = {
+        "prompt": str(item.prompt),
+        "name": func_name,
+        "parameters": {},
+    }
+
+    params_starter: str = ',\n  "parameters": {\n'
+    if visual:
+        print(
+            f"{Color.WHITE.value}{params_starter}{Color.RST.value}",
+            end="",
+            flush=True,
+        )
+    for token in cached_encode(llm, params_starter, cache):
+        active_tokens.append(token)
+
+    param_keys: list[str] = list(chosen_func.parameters.keys())
+    total_keys: int = len(param_keys)
+
+    for index, param_key in enumerate(param_keys):
+        param_obj: TypeDef = chosen_func.parameters[param_key]
+        expected_type: str = str(param_obj.type)
+
+        key_prefix: str = f'    "{param_key}": '
+        if expected_type == "string":
+            key_prefix += '"'
+
+        if visual:
+            print(
+                f"{Color.WHITE.value}{key_prefix}{Color.RST.value}",
+                end="",
+                flush=True,
+            )
+        for token in cached_encode(llm, key_prefix, cache):
+            active_tokens.append(token)
+
+        raw_val: str
+        raw_val, active_tokens = generate_parameter_value(
+            llm, vocab, expected_type, active_tokens, visual
+        )
+
+        parsed_val: ParsedParamValue = convert_value_to_type(
+            raw_val, expected_type
+        )
+        param_container: dict[str, str | int | float] = cast(
+            dict[str, ParsedParamValue], result_payload["parameters"]
+        )
+        param_container[param_key] = parsed_val
+
+        closing_value_token: str = ""
+        if expected_type == "string":
+            closing_value_token = '"'
+
+        separator: str = ",\n"
+        if index == total_keys - 1:
+            separator = "\n"
+
+        suffix: str = closing_value_token + separator
+        if visual:
+            print(
+                f"{Color.WHITE.value}{suffix}{Color.RST.value}",
+                end="",
+                flush=True,
+            )
+        for token in cached_encode(llm, suffix, cache):
+            active_tokens.append(token)
+
+    closing_json: str = "  }\n}"
+    if visual:
+        print(
+            f"{Color.WHITE.value}{closing_json}{Color.RST.value}",
+            end="",
+            flush=True,
+        )
+        print("\n-----------------\n")
+
+    return result_payload
 
 
 def run_inference(
@@ -290,154 +530,50 @@ def run_inference(
     output_filename: str,
     model_name: str,
     cache: bool,
-    visual: bool
+    visual: bool,
 ) -> None:
+    """Run constrained inference over a series of tasks and save outputs.
+
+    Args:
+        data_prompt: List of user tasks/prompts.
+        data_function: Available function prototypes.
+        output_filename: File destination for final JSON dump.
+        model_name: Name of the model to load.
+        cache: Flag to enable token caching.
+        visual: Flag to display interactive terminal output.
     """
-    The main loop that runs the AI model token by token for each test.
-    Optimized to cache static components and tokenization overhead.
-    """
-    llm = Small_LLM_Model(model_name=model_name)
+    llm: Small_LLM_Model = Small_LLM_Model(model_name=model_name)
     vocab: dict[int, str] = get_cached_vocab(model_name)
 
     function_prompt: str = build_prompt_func(data_function)
     function_tokens: list[int] = cached_encode(llm, function_prompt, cache)
     allowed_names: list[str] = lst_name_fonction(data_function)
 
-    helper_json_params = ',\n  "parameters": {\n    '
-    helper_tokens_params: list[int] = cached_encode(llm, helper_json_params,
-                                                    cache)
-
-    final_results: list[dict[str, Any]] = []
+    final_results: list[
+        dict[str, Union[str, dict[str, ParsedParamValue]]]
+    ] = []
 
     for item in data_prompt:
-        starter: str = f'Task: {item.prompt}\nJSON:\n{{\n  "name": "'
-        generated_tokens: list[int] = function_tokens + cached_encode(llm,
-                                                                      starter,
-                                                                      cache)
-
-        state = 1
-        chosen_function_object = None
-
-        token_count = 0
-        max_tokens = 150
-
-        if visual:
-            print(f"\n{Color.GREEN.value}\n\n[PROMPT] "
-                  f"{Color.BLUE.value}{item.prompt}"
-                  f"{Color.RST.value}\n"
-                  f"{Color.WHITE.value}{{\n  \"name\": \"", end="", flush=True)
-
-        size_start_prompt: int = len(generated_tokens)
-
-        while True:
-            token_count += 1
-            if token_count > max_tokens:
-                if visual:
-                    print(
-                        f"{Color.RED.value}\n\n[ERROR] Token limit reached !!"
-                        f"{Color.RST.value}")
-                final_results.append(
-                    {"prompt": item.prompt, "error": "LIMIT MAX TOKEN"})
-                if visual:
-                    print("\n-----------------\n")
-                break
-
-            logits: NDArray[Any] = np.array(
-                llm.get_logits_from_input_ids(generated_tokens))
-            logits_origin: NDArray[Any] = logits.copy()
-
-            if state == 1:
-                step_name(logits, logits_origin, vocab,
-                          allowed_names, llm, generated_tokens)
-            elif state == 2:
-                step_parameters(logits, logits_origin, vocab,
-                                llm, generated_tokens, chosen_function_object)
-            if np.max(logits) == -float("inf"):
-                if visual:
-                    print(f"{Color.RED.value}\n\n[ERROR] Generation blocked "
-                          f"(lost model) !{Color.RST.value}")
-
-                final_results.append(
-                    {"prompt": item.prompt, "error": "No matching function"})
-
-                if visual:
-                    print("\n-----------------\n")
-                break
-
-            next_token = int(np.argmax(logits))
-            generated_tokens.append(next_token)
-
-            result_text: str = llm.decode([next_token])
-            if len(generated_tokens) > size_start_prompt:
-                if visual:
-                    print(
-                        f"{Color.WHITE.value}{result_text}"
-                        f"{Color.RST.value}", end="", flush=True)
-
-            if state == 1:
-                full_text: str = llm.decode(generated_tokens)
-                name_generated: str = full_text.split('"name": "')[-1]
-
-                if '"' in name_generated:
-                    clean_name: str = name_generated.replace('"', '').strip()
-
-                    state = 2
-
-                    for func in data_function:
-                        if func.name == clean_name:
-                            chosen_function_object = func
-                            break
-
-                    generated_tokens.extend(helper_tokens_params)
-                    if visual:
-                        print(
-                            f"{Color.WHITE.value}{helper_json_params}"
-                            f"{Color.RST.value}", end="", flush=True)
-
-            elif state == 2:
-                current_text: str = llm.decode(generated_tokens)
-                open_brackets: int = current_text.count('{')
-                closed_brackets: int = current_text.count('}')
-
-                if open_brackets > 0 and open_brackets == closed_brackets:
-                    json_str: str = "{\n" + current_text.split("JSON:\n{")[-1]
-
-                    json_str = json_str.replace(': r"', ': "').replace(
-                        ':r"', ':"').replace(':  r"', ': "')
-                    json_str = json_str.replace(": r'", ': "').replace(
-                        ":r'", ':"').replace(":  r'", ': "')
-                    json_str = json_str.replace("',", '",').replace(
-                        "'\n", '"\n').replace("' \n", '" \n').replace("'}",
-                                                                      '"}')
-
-                    json_str = (json_str.replace("\\d", "\\\\d")
-                                .replace("\\w", "\\\\w")
-                                .replace("\\s", "\\\\s")
-                                .replace("\\b", "\\\\b")
-                                .replace("\\W", "\\\\W")
-                                .replace("\\D", "\\\\D"))
-
-                    try:
-                        parsed_data: Any = json.loads(json_str)
-                        processed_data: dict[str, Any] = post_process_types(
-                            parsed_data, chosen_function_object)
-
-                        json_object: dict[str, str] = {"prompt": item.prompt}
-                        json_object.update(processed_data)
-                    except json.JSONDecodeError as error:
-                        if visual:
-                            print(
-                                f"\n\n{Color.RED.value}[ERROR] "
-                                "Failed to parse JSON: "
-                                f"{error}{Color.RST.value}")
-
-                        json_object = {
-                            "prompt": item.prompt,
-                            "error": "No matching function"}
-
-                    final_results.append(json_object)
-                    if visual:
-                        print("\n-----------------\n")
-                    break
+        try:
+            item_result: dict[str, str | dict[
+                str, str | int | float]] = process_single_task(
+                item,
+                llm,
+                vocab,
+                function_tokens,
+                data_function,
+                allowed_names,
+                cache,
+                visual,
+            )
+            final_results.append(item_result)
+        except (ValueError, KeyError, json.JSONDecodeError):
+            fallback_error: dict[
+                str, Union[str, dict[str, ParsedParamValue]]
+            ] = {
+                "prompt": str(item.prompt),
+                "error": "Failed during generation",
+            }
+            final_results.append(fallback_error)
 
     output(output_filename, final_results)
