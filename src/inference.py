@@ -123,7 +123,18 @@ def post_process_types(
     params: Optional[Union[str, dict[str, ParsedParamValue]]] = (
         parsed_data.get("parameters")
     )
+
     if isinstance(params, dict):
+        for param_name, param_val in params.items():
+            if param_name == "time" and isinstance(param_val, str):
+                param_val: str = param_val.replace(":", "")
+                params[param_name] = param_val
+
+            if param_name == "to" and isinstance(param_val,
+                                                 str) and "@" in param_val:
+                param_val = param_val.replace("@", ".")
+                params[param_name] = param_val
+
         for param_name, param_val in params.items():
             if param_name in chosen_func_obj.parameters:
                 expected_type: str = str(
@@ -168,8 +179,8 @@ def cached_encode(
 
 
 def step_name(
-    logits: NDArray,
-    logits_origin: NDArray,
+    logits: Any,
+    logits_origin: Any,
     vocab: dict[int, str],
     allowed_names: list[str],
     llm: Small_LLM_Model,
@@ -234,9 +245,10 @@ def step_parameters(
         chosen_function: Target function schema definition.
     """
     current_text: str = llm.decode(generated_tokens)
-
     expected_type: Optional[str] = None
+
     if chosen_function and hasattr(chosen_function, "parameters"):
+
         for param_key, param_obj in chosen_function.parameters.items():
             key_tag: str = f'"{param_key}":'
             if key_tag in current_text:
@@ -248,11 +260,11 @@ def step_parameters(
         return
 
     logits[:] = -float("inf")
-    allowed_chars: str = (
-        "0123456789.-, \n}"
-        if expected_type in ("number", "float")
-        else "0123456789-, \n}"
-    )
+
+    if expected_type == "number" or expected_type == "float":
+        allowed_chars = "0123456789.-, \n}"
+    else:
+        allowed_chars = "0123456789-, \n}"
 
     for token_id, token_text in vocab.items():
         clean_text: str = (
@@ -265,8 +277,15 @@ def step_parameters(
             logits[int(token_id)] = logits_origin[int(token_id)]
             continue
 
-        if all(char in allowed_chars for char in clean_text):
-            logits[int(token_id)] = logits_origin[int(token_id)]
+        valide = True
+        for char in clean_text:
+            if char not in allowed_chars:
+                valide = False
+                break
+
+        if valide:
+            token_index = int(token_id)
+            logits[token_index] = logits_origin[token_index]
 
 
 def run_inference(
@@ -389,8 +408,8 @@ def run_inference(
             next_token: int = int(np.argmax(logits))
             generated_tokens.append(next_token)
 
-            result_text: str = llm.decode([next_token])
             if len(generated_tokens) > size_start_prompt and visual:
+                result_text: str = llm.decode([next_token])
                 print(
                     f"{Color.WHITE.value}{result_text}{Color.RST.value}",
                     end="",
