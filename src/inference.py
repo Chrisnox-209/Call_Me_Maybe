@@ -26,7 +26,7 @@ def get_cached_vocab(model_name: str) -> dict[int, str]:
 
 
 @lru_cache(maxsize=128)
-def _build_prompt_func_cached(
+def build_prompt_func_cached(
     functions_signature: tuple[tuple[str, str,
                                      tuple[tuple[str, str], ...], str], ...]
 ) -> str:
@@ -77,7 +77,7 @@ def build_prompt_func(data_function: list[ParsngFunctions]) -> str:
         )
         for f in data_function
     )
-    return _build_prompt_func_cached(signature)
+    return build_prompt_func_cached(signature)
 
 
 def post_process_types(
