@@ -230,7 +230,7 @@ class ParsngFunctions(BaseModel):
                 valid_data.append(result)
             except ValidationError as error:
                 err: ErrorDetails = error.errors()[0]
-                loc_str = ".".join(str(x) for x in err['loc'])
+                loc_str: str = ".".join(str(x) for x in err['loc'])
                 raise ValueError(f"Invalid function definition: {loc_str}: "
                                  f"{err['msg']}")
         return valid_data

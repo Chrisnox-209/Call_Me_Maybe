@@ -273,13 +273,13 @@ def step_parameters(
             logits[int(token_id)] = logits_origin[int(token_id)]
             continue
 
-        valide = True
+        valid = True
         for char in clean_text:
             if char not in allowed_chars:
-                valide = False
+                valid = False
                 break
 
-        if valide:
+        if valid:
             token_index = int(token_id)
             logits[token_index] = logits_origin[token_index]
 
