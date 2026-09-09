@@ -46,6 +46,7 @@ def main(input: str, output: str, functions_definition: str,
     except ValueError as e:
         print(f"{Color.RED.value}[ERROR]{Color.RST.value} {e}")
         sys.exit(1)
+
     run_inference(parse_prompt, parse_function, output,
                   model, cache, visual)
 
