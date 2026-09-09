@@ -125,9 +125,10 @@ def post_process_types(
     )
 
     if isinstance(params, dict):
+        param_val: Any
         for param_name, param_val in params.items():
             if param_name == "time" and isinstance(param_val, str):
-                param_val: str = param_val.replace(":", "")
+                param_val = param_val.replace(":", "")
                 params[param_name] = param_val
 
             if param_name == "to" and isinstance(param_val,
