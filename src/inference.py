@@ -252,10 +252,15 @@ def step_parameters(
 
         for param_key, param_obj in chosen_function.parameters.items():
             key_tag: str = f'"{param_key}":'
+
             if key_tag in current_text:
-                step_val: str = current_text.split(key_tag)[-1]
-                if not any(delim in step_val for delim in (",", "\n", "}")):
+                step_val: Any = current_text.split(key_tag)[-1]
+                key_is_finished: bool = (("," in step_val)
+                                         or ("\n" in step_val)
+                                         or ("}" in step_val))
+                if not key_is_finished:
                     expected_type = str(param_obj.type)
+                    break
 
     if expected_type is None or expected_type == "string":
         return
